@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+  <meta charset="UTF-8">
+  <title>Simón Circular - Corregido</title>
+  <style>
+    body {
+      margin: 0;
+      background-color: #222;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      overflow: hidden;
+      font-family: sans-serif;
+    }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser.min.js"></script>
+</head>
+
+<body>
+  <script>
+    const config = {
+      type: Phaser.AUTO,
+      width: 800,
+      height: 800,
+      backgroundColor: '#333333',
+      physics: { default: 'arcade', arcade: { debug: false } },
+      scene: { preload: preload, create: create, update: update }
+    };
+
+    let game = new Phaser.Game(config);
+    let arenaCenter = { x: 400, y: 400 }, arenaRadius = 200, isGameOver = false;
+
+    let p1Data = { name: "J1", color: 0x00ffff, angle: 0, angVel: 0, angAccel: 0.0006, friction: 0.96, maxSpeed: 0.04, health: 3, maxHealth: 3 };
+    let p2Data = { name: "J2", color: 0xff00ff, angle: Math.PI, angVel: 0, angAccel: 0.0006, friction: 0.96, maxSpeed: 0.04, health: 3, maxHealth: 3 };
+
+    function preload() {
+      let g = this.make.graphics();
+      g.fillStyle(0x00ffff).fillRect(0, 0, 30, 30).generateTexture('p1', 30, 30);
+      g.clear().fillStyle(0xff00ff).fillRect(0, 0, 30, 30).generateTexture('p2', 30, 30);
+      g.clear().fillStyle(0xffffff).fillCircle(5, 5, 5).generateTexture('ball', 10, 10);
+    }
+
+    function create() {
+      this.add.graphics().lineStyle(4, 0x555555).strokeCircle(arenaCenter.x, arenaCenter.y, arenaRadius);
+
+      p1Data.sprite = this.physics.add.sprite(0, 0, 'p1');
+      p2Data.sprite = this.physics.add.sprite(0, 0, 'p2');
+      p1Data.bullets = this.physics.add.group({ maxSize: 2 });
+      p2Data.bullets = this.physics.add.group({ maxSize: 2 });
+
+      p1Data.healthBar = createHealthBar(this, 50, 50, p1Data.color);
+      p2Data.healthBar = createHealthBar(this, 550, 50, p2Data.color);
+
+      this.add.text(50, 20, "P1: A-D + ESPACIO", { fontSize: '14px', fill: '#00ffff' });
+      this.add.text(550, 20, "P2: ←-→ + ENTER", { fontSize: '14px', fill: '#ff00ff' });
+
+      p1Data.keys = this.input.keyboard.addKeys({ left: 'A', right: 'D', fire: 'SPACE' });
+      p2Data.keys = this.input.keyboard.addKeys({ left: 'LEFT', right: 'RIGHT', fire: 'ENTER' });
+
+      this.input.keyboard.on('keydown-SPACE', () => { if (!isGameOver) fire(this, p1Data); });
+      this.input.keyboard.on('keydown-ENTER', () => { if (!isGameOver) fire(this, p2Data); });
+
+      this.physics.add.overlap(p2Data.sprite, p1Data.bullets, (p, b) => hit(this, p2Data, b));
+      this.physics.add.overlap(p1Data.sprite, p2Data.bullets, (p, b) => hit(this, p1Data, b));
+    }
+
+    function update() {
+      if (isGameOver) return;
+      move(p1Data, p1Data.keys.left, p1Data.keys.right);
+      move(p2Data, p2Data.keys.left, p2Data.keys.right);
+
+      [p1Data.bullets, p2Data.bullets].forEach(g => {
+        g.children.iterate(b => {
+          if (b && b.active && Phaser.Math.Distance.Between(arenaCenter.x, arenaCenter.y, b.x, b.y) > arenaRadius + 100) {
+            b.setActive(false).setVisible(false);
+          }
+        });
+      });
+    }
+
+    function createHealthBar(scene, x, y, color) {
+      scene.add.graphics().fillStyle(0x555555).fillRect(x, y, 200, 20);
+      let barGraphics = scene.add.graphics();
+      let barObj = { bar: barGraphics, x: x, y: y, color: color };
+      updateHealthBarVisual(barObj, 1);
+      return barObj;
+    }
+
+    function updateHealthBarVisual(barObj, pct) {
+      barObj.bar.clear().fillStyle(barObj.color).fillRect(barObj.x, barObj.y, 200 * pct, 20);
+    }
+
+    function move(d, l, r) {
+      if (l.isDown) d.angVel -= d.angAccel;
+      else if (r.isDown) d.angVel += d.angAccel;
+      d.angVel *= d.friction;
+      d.angVel = Phaser.Math.Clamp(d.angVel, -d.maxSpeed, d.maxSpeed);
+      d.angle += d.angVel;
+      d.sprite.setPosition(arenaCenter.x + arenaRadius * Math.cos(d.angle), arenaCenter.y + arenaRadius * Math.sin(d.angle));
+      d.sprite.setRotation(d.angle + Math.PI / 2);
+    }
+
+    function fire(scene, d) {
+      let b = d.bullets.get();
+      if (b) {
+        b.setActive(true).setVisible(true).setTexture('ball').setPosition(d.sprite.x, d.sprite.y);
+        scene.physics.velocityFromRotation(d.angle + Math.PI + (d.angVel * 20), 500, b.body.velocity);
+      }
+    }
+
+    function hit(scene, p, b) {
+      if (!b.active) return;
+      b.setActive(false).setVisible(false).body.stop();
+      p.health--;
+      updateHealthBarVisual(p.healthBar, p.health / p.maxHealth);
+      scene.tweens.add({ targets: p.sprite, alpha: 0, duration: 50, yoyo: true, repeat: 3 });
+      if (p.health <= 0) {
+        isGameOver = true;
+        scene.add.text(400, 400, "¡FIN DEL JUEGO!", { fontSize: '48px', color: '#fff' }).setOrigin(0.5);
+      }
+    }
+  </script>
+</body>
+
+</html>
