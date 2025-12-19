@@ -32,23 +32,23 @@
 
     let game = new Phaser.Game(config);
     let arenaCenter = { x: 400, y: 400 }, arenaRadius = 200, isGameOver = false;
+    let winText, restartText; // Variables to hold UI elements for cleanup
 
-    // Player data with starting positions (270º top, 90º bottom)
     let player1 = {
       name: "P1", color: 0x00ffff,
-      angle: Math.PI * 1, // (180° Left)
+      angle: Math.PI * 1,
       angVel: 0, angAccel: 0.0006, friction: 0.96, maxSpeed: 0.05,
       health: 3, maxHealth: 3,
-      aimAngle: Math.PI * 0, // Aiming towards center
+      aimAngle: Math.PI * 0,
       laserGfx: null
     };
 
     let player2 = {
       name: "P2", color: 0xff00ff,
-      angle: Math.PI * 0, // 0° (Right)
+      angle: Math.PI * 0,
       angVel: 0, angAccel: 0.0006, friction: 0.96, maxSpeed: 0.05,
       health: 3, maxHealth: 3,
-      aimAngle: Math.PI * 1, // Aiming towards center
+      aimAngle: Math.PI * 1,
       laserGfx: null
     };
 
@@ -69,10 +69,8 @@
     }
 
     function create() {
-      // Arena Stage
       this.add.graphics().lineStyle(4, 0x555555).strokeCircle(arenaCenter.x, arenaCenter.y, arenaRadius);
 
-      // Sprites and Lasers
       player1.sprite = this.physics.add.sprite(0, 0, 'p1');
       player2.sprite = this.physics.add.sprite(0, 0, 'p2');
       player1.laserGfx = this.add.graphics();
@@ -81,32 +79,30 @@
       player1.bullets = this.physics.add.group({ maxSize: 2 });
       player2.bullets = this.physics.add.group({ maxSize: 2 });
 
-      // UI Layout
       player1.healthBar = createHealthBar(this, 50, 50, player1.color);
       player2.healthBar = createHealthBar(this, 550, 50, player2.color);
 
       this.add.text(50, 15, "P1: A-D (Move) | W-S (Aim) | SPACE (Shoot)", { fontSize: '11px', fill: '#00ffff' });
       this.add.text(480, 15, "P2: ←→ (Move) | ↑↓ (Aim) | ENTER (Shoot)", { fontSize: '11px', fill: '#ff00ff' });
 
-      // Input Controls
       player1.keys = this.input.keyboard.addKeys({ left: 'A', right: 'D', up: 'W', down: 'S', fire: 'SPACE' });
       player2.keys = this.input.keyboard.addKeys({ left: 'LEFT', right: 'RIGHT', up: 'UP', down: 'DOWN', fire: 'ENTER' });
 
       this.input.keyboard.on('keydown-SPACE', () => { if (!isGameOver) fire(this, player1); });
       this.input.keyboard.on('keydown-ENTER', () => { if (!isGameOver) fire(this, player2); });
 
-      // Collision Detection
+      // Listener for Restart Key
+      this.input.keyboard.on('keydown-N', () => { if (isGameOver) resetGame(this); });
+
       this.physics.add.overlap(player2.sprite, player1.bullets, (p, b) => hit(this, player2, b));
       this.physics.add.overlap(player1.sprite, player2.bullets, (p, b) => hit(this, player1, b));
     }
 
     function update() {
       if (isGameOver) return;
-
       updatePlayer(player1);
       updatePlayer(player2);
 
-      // Bullet Cleanup (Despawn when out of range)
       [player1.bullets, player2.bullets].forEach(group => {
         group.children.iterate(bullet => {
           if (bullet && bullet.active && Phaser.Math.Distance.Between(arenaCenter.x, arenaCenter.y, bullet.x, bullet.y) > arenaRadius + 150) {
@@ -117,23 +113,18 @@
     }
 
     function updatePlayer(p) {
-      // 1. Orbital Movement
       if (p.keys.left.isDown) p.angVel -= p.angAccel;
       else if (p.keys.right.isDown) p.angVel += p.angAccel;
-
       p.angVel *= p.friction;
       p.angVel = Phaser.Math.Clamp(p.angVel, -p.maxSpeed, p.maxSpeed);
       p.angle += p.angVel;
       p.sprite.setPosition(arenaCenter.x + arenaRadius * Math.cos(p.angle), arenaCenter.y + arenaRadius * Math.sin(p.angle));
 
-      // 2. Aiming Logic
       if (p.keys.up.isDown) p.aimAngle -= 0.04;
       if (p.keys.down.isDown) p.aimAngle += 0.04;
       p.sprite.setRotation(p.aimAngle + Math.PI / 2);
 
-      // 3. Draw SHORT Laser (1/5 of the radius)
-      p.laserGfx.clear();
-      p.laserGfx.lineStyle(1, p.color, 0.4);
+      p.laserGfx.clear().lineStyle(1, p.color, 0.4);
       let laserLength = arenaRadius / 5;
       let lx = p.sprite.x + Math.cos(p.aimAngle) * laserLength;
       let ly = p.sprite.y + Math.sin(p.aimAngle) * laserLength;
@@ -163,23 +154,44 @@
     function hit(scene, player, bullet) {
       if (!bullet.active) return;
       bullet.setActive(false).setVisible(false).body.stop();
-
       player.health--;
       updateHealthBarVisual(player.healthBar, player.health / player.maxHealth);
-
-      // Damage flicker effect
       scene.tweens.add({ targets: player.sprite, alpha: 0, duration: 50, yoyo: true, repeat: 3 });
 
       if (player.health <= 0) {
         isGameOver = true;
         let winnerName = player.name === 'P1' ? 'PLAYER 2' : 'PLAYER 1';
-        scene.add.text(400, 400, `${winnerName} WINS!`, {
-          fontSize: '40px',
-          color: '#fff',
-          backgroundColor: '#000',
-          padding: { x: 20, y: 10 }
+
+        winText = scene.add.text(400, 380, `${winnerName} WINS!`, {
+          fontSize: '40px', color: '#fff', backgroundColor: '#000', padding: { x: 20, y: 10 }
         }).setOrigin(0.5);
+
+        restartText = scene.add.text(400, 450, `Press 'N' or CLICK HERE to Restart`, {
+          fontSize: '20px', color: '#0f0', backgroundColor: '#222', padding: { x: 10, y: 5 }
+        }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+
+        restartText.on('pointerdown', () => resetGame(scene));
       }
+    }
+
+    function resetGame(scene) {
+      // 1. Reset Game State
+      isGameOver = false;
+
+      // 2. Clear UI Elements
+      if (winText) winText.destroy();
+      if (restartText) restartText.destroy();
+
+      // 3. Reset Players
+      [player1, player2].forEach((p, index) => {
+        p.health = p.maxHealth;
+        p.angVel = 0;
+        p.angle = (index === 0) ? Math.PI : 0; // P1 Left, P2 Right
+        p.aimAngle = (index === 0) ? 0 : Math.PI; // P1 aims right, P2 aims left
+        p.sprite.setAlpha(1);
+        p.bullets.clear(true, true);
+        updateHealthBarVisual(p.healthBar, 1);
+      });
     }
   </script>
 </body>
