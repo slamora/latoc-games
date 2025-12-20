@@ -100,6 +100,14 @@
 
       this.physics.add.overlap(player2.sprite, player1.bullets, (p, b) => hit(this, player2, b));
       this.physics.add.overlap(player1.sprite, player2.bullets, (p, b) => hit(this, player1, b));
+
+      // Friendly fire - players can hit themselves with bounced bullets
+      this.physics.add.overlap(player1.sprite, player1.bullets, (p, b) => {
+        if (b.bounceCount > 0) hit(this, player1, b);
+      });
+      this.physics.add.overlap(player2.sprite, player2.bullets, (p, b) => {
+        if (b.bounceCount > 0) hit(this, player2, b);
+      });
     }
 
     function update() {
@@ -210,10 +218,13 @@
       bullet.setActive(false).setVisible(false).body.stop();
       player.health--;
       updateHealthBarVisual(player.healthBar, player.health / player.maxHealth);
-      scene.tweens.add({ targets: player.sprite, alpha: 0, duration: 50, yoyo: true, repeat: 3 });
 
       if (player.health <= 0) {
         isGameOver = true;
+
+        // Stop any existing tweens on the player sprite
+        scene.tweens.killTweensOf(player.sprite);
+        player.sprite.setAlpha(1); // Ensure sprite is visible when game ends
 
         // Determine winner based on who was hit
         let winnerName = player.name === 'P1' ? 'PLAYER 2' : 'PLAYER 1';
@@ -231,6 +242,19 @@
         }).setOrigin(0.5).setInteractive({ useHandCursor: true });
 
         restartText.on('pointerdown', () => resetGame(scene));
+      } else {
+        // Only do the flash animation if player is still alive
+        scene.tweens.add({
+          targets: player.sprite,
+          alpha: 0,
+          duration: 50,
+          yoyo: true,
+          repeat: 3,
+          onComplete: () => {
+            // Ensure sprite is visible after animation
+            player.sprite.setAlpha(1);
+          }
+        });
       }
     }
 
