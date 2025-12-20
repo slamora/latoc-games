@@ -21,17 +21,8 @@
 
 <body>
   <script>
-    const config = {
-      type: Phaser.AUTO,
-      width: 800,
-      height: 800,
-      backgroundColor: '#333333',
-      physics: { default: 'arcade', arcade: { debug: false } },
-      scene: { preload: preload, create: create, update: update }
-    };
-
-    let game = new Phaser.Game(config);
     let arenaCenter = { x: 400, y: 400 }, arenaRadius = 200, wallRadius = 300, isGameOver = false;
+    let currentScenario = 1;
     let winText, restartText; // Variables to hold UI elements for cleanup
 
     let player1 = {
@@ -52,299 +43,506 @@
       laserGfx: null
     };
 
-    function preload() {
-      let graphics = this.make.graphics();
-      const drawTankIcon = (gfx, color) => {
-        gfx.clear();
-        gfx.fillStyle(color);
-        gfx.fillRect(5, 10, 20, 20);
-        gfx.fillRect(12, 0, 6, 12);
-      };
-      drawTankIcon(graphics, player1.color);
-      graphics.generateTexture('p1', 30, 30);
-      drawTankIcon(graphics, player2.color);
-      graphics.generateTexture('p2', 30, 30);
-      graphics.clear().fillStyle(0xffffff).fillCircle(5, 5, 5).generateTexture('bullet', 10, 10);
-
-      // Create multiplier obstacle texture (orange diamond)
-      graphics.clear().fillStyle(0xff6600);
-      graphics.fillTriangle(15, 5, 25, 15, 15, 25);
-      graphics.fillTriangle(15, 5, 5, 15, 15, 25);
-      graphics.generateTexture('multiplier', 30, 30);
-
-      graphics.destroy();
-    }
-
-    function create() {
-      // Draw player trajectory circle (gray)
-      this.add.graphics().lineStyle(2, 0x555555).strokeCircle(arenaCenter.x, arenaCenter.y, arenaRadius);
-
-      // Draw outer wall circle (red/orange)
-      this.add.graphics().lineStyle(4, 0xff6600).strokeCircle(arenaCenter.x, arenaCenter.y, wallRadius);
-
-      player1.sprite = this.physics.add.sprite(0, 0, 'p1');
-      player2.sprite = this.physics.add.sprite(0, 0, 'p2');
-
-      // Create multiplier obstacle in center
-      let multiplierObstacle = this.physics.add.sprite(arenaCenter.x, arenaCenter.y, 'multiplier');
-      multiplierObstacle.body.setImmovable(true);
-
-      player1.laserGfx = this.add.graphics();
-      player2.laserGfx = this.add.graphics();
-
-      player1.bullets = this.physics.add.group({ maxSize: 4 });
-      player2.bullets = this.physics.add.group({ maxSize: 4 });
-
-      player1.healthBar = createHealthBar(this, 50, 50, player1.color);
-      player2.healthBar = createHealthBar(this, 550, 50, player2.color);
-
-      this.add.text(50, 15, "P1: A-D (Move) | W-S (Aim) | SPACE (Shoot)", { fontSize: '11px', fill: '#00ffff' });
-      this.add.text(480, 15, "P2: ←→ (Move) | ↑↓ (Aim) | ENTER (Shoot)", { fontSize: '11px', fill: '#ff00ff' });
-
-      player1.keys = this.input.keyboard.addKeys({ left: 'A', right: 'D', up: 'W', down: 'S', fire: 'SPACE' });
-      player2.keys = this.input.keyboard.addKeys({ left: 'LEFT', right: 'RIGHT', up: 'UP', down: 'DOWN', fire: 'ENTER' });
-
-      this.input.keyboard.on('keydown-SPACE', () => { if (!isGameOver) fire(this, player1); });
-      this.input.keyboard.on('keydown-ENTER', () => { if (!isGameOver) fire(this, player2); });
-
-      // Listener for Restart Key
-      this.input.keyboard.on('keydown-N', () => { if (isGameOver) resetGame(this); });
-
-      this.physics.add.overlap(player2.sprite, player1.bullets, (p, b) => hit(this, player2, b));
-      this.physics.add.overlap(player1.sprite, player2.bullets, (p, b) => hit(this, player1, b));
-
-      // Friendly fire - players can hit themselves with bounced bullets
-      this.physics.add.overlap(player1.sprite, player1.bullets, (p, b) => {
-        if (b.bounceCount > 0) hit(this, player1, b);
-      });
-      this.physics.add.overlap(player2.sprite, player2.bullets, (p, b) => {
-        if (b.bounceCount > 0) hit(this, player2, b);
-      });
-
-      // Multiplier obstacle collisions
-      this.physics.add.overlap(multiplierObstacle, player1.bullets, (obstacle, bullet) => {
-        multiplyBullet(this, player1, bullet);
-      });
-      this.physics.add.overlap(multiplierObstacle, player2.bullets, (obstacle, bullet) => {
-        multiplyBullet(this, player2, bullet);
-      });
-    }
-
-    function multiplyBullet(scene, player, bullet) {
-      if (!bullet.active || bullet.multiplied) return;
-
-      // Mark bullet as multiplied to prevent infinite multiplication
-      bullet.multiplied = true;
-
-      // Get current bullet properties
-      let currentVel = bullet.body.velocity;
-      let currentPos = { x: bullet.x, y: bullet.y };
-
-      // Create second bullet with slightly different angle
-      let newBullet = player.bullets.get();
-      if (newBullet) {
-        newBullet.setActive(true).setVisible(true).setTexture('bullet');
-        newBullet.setPosition(currentPos.x, currentPos.y);
-
-        // Calculate perpendicular velocity for the new bullet
-        let speed = Math.sqrt(currentVel.x * currentVel.x + currentVel.y * currentVel.y);
-        let angle = Math.atan2(currentVel.y, currentVel.x) + Math.PI / 4; // 45 degree offset
-
-        newBullet.body.velocity.x = Math.cos(angle) * speed;
-        newBullet.body.velocity.y = Math.sin(angle) * speed;
-        newBullet.bounceCount = bullet.bounceCount;
-        newBullet.justBounced = false;
-        newBullet.multiplied = true; // Prevent this bullet from multiplying again
-        newBullet.isMultiplied = true; // Mark as a multiplied bullet
+    // Menu Scene
+    class MenuScene extends Phaser.Scene {
+      constructor() {
+        super({ key: 'MenuScene' });
       }
 
-      // Modify original bullet trajectory slightly
-      let originalAngle = Math.atan2(currentVel.y, currentVel.x) - Math.PI / 4; // -45 degree offset
-      let speed = Math.sqrt(currentVel.x * currentVel.x + currentVel.y * currentVel.y);
-      bullet.body.velocity.x = Math.cos(originalAngle) * speed;
-      bullet.body.velocity.y = Math.sin(originalAngle) * speed;
-    }
-
-    function update() {
-      if (isGameOver) return;
-      updatePlayer(player1);
-      updatePlayer(player2);
-
-      [player1.bullets, player2.bullets].forEach(group => {
-        group.children.iterate(bullet => {
-          if (bullet && bullet.active) {
-            let distanceToCenter = Phaser.Math.Distance.Between(arenaCenter.x, arenaCenter.y, bullet.x, bullet.y);
-
-            // Check if bullet is hitting the outer wall
-            if (distanceToCenter >= wallRadius - 5 && !bullet.justBounced) {
-              if (bullet.bounceCount < 1) {
-                // First bounce - reflect velocity
-                let centerToBullet = {
-                  x: bullet.x - arenaCenter.x,
-                  y: bullet.y - arenaCenter.y
-                };
-                let length = Math.sqrt(centerToBullet.x * centerToBullet.x + centerToBullet.y * centerToBullet.y);
-                let normal = { x: centerToBullet.x / length, y: centerToBullet.y / length };
-
-                let velocity = bullet.body.velocity;
-                let dotProduct = velocity.x * normal.x + velocity.y * normal.y;
-
-                // Only reflect if bullet is moving towards the wall
-                if (dotProduct > 0) {
-                  // Reflect velocity around normal
-                  bullet.body.velocity.x = velocity.x - 2 * dotProduct * normal.x;
-                  bullet.body.velocity.y = velocity.y - 2 * dotProduct * normal.y;
-
-                  // Move bullet further inward to prevent getting stuck
-                  bullet.setPosition(
-                    arenaCenter.x + normal.x * (wallRadius - 30),
-                    arenaCenter.y + normal.y * (wallRadius - 30)
-                  );
-
-                  bullet.bounceCount++;
-                  bullet.justBounced = true;
-
-                  // Clear the justBounced flag after a short delay
-                  setTimeout(() => {
-                    if (bullet && bullet.active) {
-                      bullet.justBounced = false;
-                    }
-                  }, 100);
-                }
-              } else {
-                // Already bounced once, destroy bullet
-                bullet.setActive(false).setVisible(false);
-              }
-            }
-
-            // Remove bullet if too far from arena (backup cleanup)
-            if (distanceToCenter > wallRadius + 100) {
-              bullet.setActive(false).setVisible(false);
-            }
-          }
-        });
-      });
-    }
-
-    function updatePlayer(p) {
-      if (p.keys.left.isDown) p.angVel -= p.angAccel;
-      else if (p.keys.right.isDown) p.angVel += p.angAccel;
-      p.angVel *= p.friction;
-      p.angVel = Phaser.Math.Clamp(p.angVel, -p.maxSpeed, p.maxSpeed);
-      p.angle += p.angVel;
-      p.sprite.setPosition(arenaCenter.x + arenaRadius * Math.cos(p.angle), arenaCenter.y + arenaRadius * Math.sin(p.angle));
-
-      if (p.keys.up.isDown) p.aimAngle -= 0.04;
-      if (p.keys.down.isDown) p.aimAngle += 0.04;
-      p.sprite.setRotation(p.aimAngle + Math.PI / 2);
-
-      p.laserGfx.clear().lineStyle(1, p.color, 0.4);
-      let laserLength = arenaRadius / 5;
-      let lx = p.sprite.x + Math.cos(p.aimAngle) * laserLength;
-      let ly = p.sprite.y + Math.sin(p.aimAngle) * laserLength;
-      p.laserGfx.lineBetween(p.sprite.x, p.sprite.y, lx, ly);
-    }
-
-    function fire(scene, p) {
-      // Count only original bullets (not multiplied ones)
-      let originalBullets = 0;
-      p.bullets.children.iterate(bullet => {
-        if (bullet && bullet.active && !bullet.isMultiplied) {
-          originalBullets++;
-        }
-      });
-
-      // Allow firing if less than 2 original bullets
-      if (originalBullets < 2) {
-        let bullet = p.bullets.get();
-        if (bullet) {
-          bullet.setActive(true).setVisible(true).setTexture('bullet').setPosition(p.sprite.x, p.sprite.y);
-          scene.physics.velocityFromRotation(p.aimAngle, 500, bullet.body.velocity);
-          bullet.bounceCount = 0; // Track number of bounces
-          bullet.justBounced = false; // Prevent immediate multiple bounces
-          bullet.multiplied = false; // Track if bullet has been multiplied
-          bullet.isMultiplied = false; // Track if this bullet is a result of multiplication
-        }
-      }
-    }
-
-    function createHealthBar(scene, x, y, color) {
-      scene.add.graphics().fillStyle(0x555555).fillRect(x, y, 200, 20);
-      let barGraphics = scene.add.graphics();
-      let barObj = { bar: barGraphics, x: x, y: y, color: color };
-      updateHealthBarVisual(barObj, 1);
-      return barObj;
-    }
-
-    function updateHealthBarVisual(barObj, pct) {
-      barObj.bar.clear().fillStyle(barObj.color).fillRect(barObj.x, barObj.y, 200 * Math.max(0, pct), 20);
-    }
-
-    function hit(scene, player, bullet) {
-      if (!bullet.active || isGameOver) return;
-
-      bullet.setActive(false).setVisible(false).body.stop();
-      player.health--;
-      updateHealthBarVisual(player.healthBar, player.health / player.maxHealth);
-
-      if (player.health <= 0) {
-        isGameOver = true;
-
-        // Stop any existing tweens on the player sprite
-        scene.tweens.killTweensOf(player.sprite);
-        player.sprite.setAlpha(1); // Ensure sprite is visible when game ends
-
-        // Determine winner based on who was hit
-        let winnerName = player.name === 'P1' ? 'PLAYER 2' : 'PLAYER 1';
-
-        // Clear all remaining bullets to stop further collisions
-        player1.bullets.clear(true, true);
-        player2.bullets.clear(true, true);
-
-        winText = scene.add.text(400, 380, `${winnerName} WINS!`, {
-          fontSize: '40px', color: '#fff', backgroundColor: '#000', padding: { x: 20, y: 10 }
+      create() {
+        // Title
+        this.add.text(400, 200, 'CIRCULAR SIMON', {
+          fontSize: '48px', color: '#fff', fontWeight: 'bold'
         }).setOrigin(0.5);
 
-        restartText = scene.add.text(400, 450, `Press 'N' or CLICK HERE to Restart`, {
-          fontSize: '20px', color: '#0f0', backgroundColor: '#222', padding: { x: 10, y: 5 }
+        this.add.text(400, 250, 'Tactical Edition', {
+          fontSize: '24px', color: '#aaa'
+        }).setOrigin(0.5);
+
+        // Scenario selection
+        this.add.text(400, 350, 'Choose Scenario:', {
+          fontSize: '32px', color: '#fff'
+        }).setOrigin(0.5);
+
+        // Scenario 1 button
+        let scenario1Btn = this.add.text(300, 450, 'Scenario 1\n(Circle)', {
+          fontSize: '24px', color: '#0f0', backgroundColor: '#222',
+          padding: { x: 20, y: 10 }, align: 'center'
         }).setOrigin(0.5).setInteractive({ useHandCursor: true });
 
-        restartText.on('pointerdown', () => resetGame(scene));
-      } else {
-        // Only do the flash animation if player is still alive
-        scene.tweens.add({
-          targets: player.sprite,
-          alpha: 0,
-          duration: 50,
-          yoyo: true,
-          repeat: 3,
-          onComplete: () => {
-            // Ensure sprite is visible after animation
-            player.sprite.setAlpha(1);
+        scenario1Btn.on('pointerdown', () => {
+          currentScenario = 1;
+          this.scene.start('GameScene');
+        });
+
+        scenario1Btn.on('pointerover', () => scenario1Btn.setStyle({ backgroundColor: '#444' }));
+        scenario1Btn.on('pointerout', () => scenario1Btn.setStyle({ backgroundColor: '#222' }));
+
+        // Scenario 2 button
+        let scenario2Btn = this.add.text(500, 450, 'Scenario 2\n(Hexagon)', {
+          fontSize: '24px', color: '#0f0', backgroundColor: '#222',
+          padding: { x: 20, y: 10 }, align: 'center'
+        }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+
+        scenario2Btn.on('pointerdown', () => {
+          currentScenario = 2;
+          this.scene.start('GameScene');
+        });
+
+        scenario2Btn.on('pointerover', () => scenario2Btn.setStyle({ backgroundColor: '#444' }));
+        scenario2Btn.on('pointerout', () => scenario2Btn.setStyle({ backgroundColor: '#222' }));
+
+        // Instructions
+        this.add.text(400, 600, 'P1: A-D (Move) | W-S (Aim) | SPACE (Shoot)', {
+          fontSize: '14px', fill: '#00ffff'
+        }).setOrigin(0.5);
+        this.add.text(400, 620, 'P2: ←→ (Move) | ↑↓ (Aim) | ENTER (Shoot)', {
+          fontSize: '14px', fill: '#ff00ff'
+        }).setOrigin(0.5);
+      }
+    }
+
+    // Game Scene
+    class GameScene extends Phaser.Scene {
+      constructor() {
+        super({ key: 'GameScene' });
+      }
+
+      preload() {
+        let graphics = this.make.graphics();
+        const drawTankIcon = (gfx, color) => {
+          gfx.clear();
+          gfx.fillStyle(color);
+          gfx.fillRect(5, 10, 20, 20);
+          gfx.fillRect(12, 0, 6, 12);
+        };
+        drawTankIcon(graphics, player1.color);
+        graphics.generateTexture('p1', 30, 30);
+        drawTankIcon(graphics, player2.color);
+        graphics.generateTexture('p2', 30, 30);
+        graphics.clear().fillStyle(0xffffff).fillCircle(5, 5, 5).generateTexture('bullet', 10, 10);
+
+        // Create multiplier obstacle texture (orange diamond)
+        graphics.clear().fillStyle(0xff6600);
+        graphics.fillTriangle(15, 5, 25, 15, 15, 25);
+        graphics.fillTriangle(15, 5, 5, 15, 15, 25);
+        graphics.generateTexture('multiplier', 30, 30);
+
+        graphics.destroy();
+      }
+
+      create() {
+        // Reset game state
+        isGameOver = false;
+
+        // Draw player trajectory circle (gray)
+        this.add.graphics().lineStyle(2, 0x555555).strokeCircle(arenaCenter.x, arenaCenter.y, arenaRadius);
+
+        // Draw walls based on scenario
+        this.createWalls();
+
+        player1.sprite = this.physics.add.sprite(0, 0, 'p1');
+        player2.sprite = this.physics.add.sprite(0, 0, 'p2');
+
+        // Create multiplier obstacle in center
+        let multiplierObstacle = this.physics.add.sprite(arenaCenter.x, arenaCenter.y, 'multiplier');
+        multiplierObstacle.body.setImmovable(true);
+
+        player1.laserGfx = this.add.graphics();
+        player2.laserGfx = this.add.graphics();
+
+        player1.bullets = this.physics.add.group({ maxSize: 4 });
+        player2.bullets = this.physics.add.group({ maxSize: 4 });
+
+        player1.healthBar = this.createHealthBar(50, 50, player1.color);
+        player2.healthBar = this.createHealthBar(550, 50, player2.color);
+
+        this.add.text(50, 15, "P1: A-D (Move) | W-S (Aim) | SPACE (Shoot)", { fontSize: '11px', fill: '#00ffff' });
+        this.add.text(480, 15, "P2: ←→ (Move) | ↑↓ (Aim) | ENTER (Shoot)", { fontSize: '11px', fill: '#ff00ff' });
+        this.add.text(400, 15, `Scenario ${currentScenario} | ESC: Menu`, { fontSize: '11px', fill: '#fff' }).setOrigin(0.5);
+
+        player1.keys = this.input.keyboard.addKeys({ left: 'A', right: 'D', up: 'W', down: 'S', fire: 'SPACE' });
+        player2.keys = this.input.keyboard.addKeys({ left: 'LEFT', right: 'RIGHT', up: 'UP', down: 'DOWN', fire: 'ENTER' });
+
+        this.input.keyboard.on('keydown-SPACE', () => { if (!isGameOver) this.fire(player1); });
+        this.input.keyboard.on('keydown-ENTER', () => { if (!isGameOver) this.fire(player2); });
+
+        // Listeners
+        this.input.keyboard.on('keydown-N', () => { if (isGameOver) this.resetGame(); });
+        this.input.keyboard.on('keydown-ESC', () => { this.scene.start('MenuScene'); });
+
+        this.physics.add.overlap(player2.sprite, player1.bullets, (p, b) => this.hit(player2, b));
+        this.physics.add.overlap(player1.sprite, player2.bullets, (p, b) => this.hit(player1, b));
+
+        // Friendly fire
+        this.physics.add.overlap(player1.sprite, player1.bullets, (p, b) => {
+          if (b.bounceCount > 0) this.hit(player1, b);
+        });
+        this.physics.add.overlap(player2.sprite, player2.bullets, (p, b) => {
+          if (b.bounceCount > 0) this.hit(player2, b);
+        });
+
+        // Multiplier obstacle collisions
+        this.physics.add.overlap(multiplierObstacle, player1.bullets, (obstacle, bullet) => {
+          this.multiplyBullet(player1, bullet);
+        });
+        this.physics.add.overlap(multiplierObstacle, player2.bullets, (obstacle, bullet) => {
+          this.multiplyBullet(player2, bullet);
+        });
+
+        // Reset players
+        this.resetPlayers();
+      }
+
+      createWalls() {
+        if (currentScenario === 1) {
+          // Circular wall
+          this.add.graphics().lineStyle(4, 0xff6600).strokeCircle(arenaCenter.x, arenaCenter.y, wallRadius);
+        } else if (currentScenario === 2) {
+          // Hexagonal wall
+          this.drawHexagon();
+        }
+      }
+
+      drawHexagon() {
+        let graphics = this.add.graphics();
+        graphics.lineStyle(4, 0xff6600);
+
+        graphics.beginPath();
+        for (let i = 0; i < 6; i++) {
+          let angle = (i * Math.PI) / 3;
+          let x = arenaCenter.x + wallRadius * Math.cos(angle);
+          let y = arenaCenter.y + wallRadius * Math.sin(angle);
+          if (i === 0) {
+            graphics.moveTo(x, y);
+          } else {
+            graphics.lineTo(x, y);
           }
+        }
+        graphics.closePath();
+        graphics.strokePath();
+      }
+
+      update() {
+        if (isGameOver) return;
+        this.updatePlayer(player1);
+        this.updatePlayer(player2);
+
+        [player1.bullets, player2.bullets].forEach(group => {
+          group.children.iterate(bullet => {
+            if (bullet && bullet.active) {
+              this.checkWallCollision(bullet);
+            }
+          });
+        });
+      }
+
+      checkWallCollision(bullet) {
+        if (currentScenario === 1) {
+          this.checkCircularWallCollision(bullet);
+        } else if (currentScenario === 2) {
+          this.checkHexagonalWallCollision(bullet);
+        }
+      }
+
+      checkCircularWallCollision(bullet) {
+        let distanceToCenter = Phaser.Math.Distance.Between(arenaCenter.x, arenaCenter.y, bullet.x, bullet.y);
+
+        if (distanceToCenter >= wallRadius - 5 && !bullet.justBounced) {
+          this.handleBulletBounce(bullet, distanceToCenter);
+        }
+
+        if (distanceToCenter > wallRadius + 100) {
+          bullet.setActive(false).setVisible(false);
+        }
+      }
+
+      checkHexagonalWallCollision(bullet) {
+        // Get bullet's current position and velocity
+        let currentX = bullet.x;
+        let currentY = bullet.y;
+        let velX = bullet.body.velocity.x;
+        let velY = bullet.body.velocity.y;
+
+        // Predict where bullet will be in next frame
+        let nextX = currentX + velX * 0.016; // 16ms frame
+        let nextY = currentY + velY * 0.016;
+
+        // Check collision with each of the 6 hexagon edges
+        for (let i = 0; i < 6; i++) {
+          let angle1 = (i * Math.PI) / 3;
+          let angle2 = ((i + 1) * Math.PI) / 3;
+
+          // Get the two points of this edge
+          let x1 = arenaCenter.x + wallRadius * Math.cos(angle1);
+          let y1 = arenaCenter.y + wallRadius * Math.sin(angle1);
+          let x2 = arenaCenter.x + wallRadius * Math.cos(angle2);
+          let y2 = arenaCenter.y + wallRadius * Math.sin(angle2);
+
+          // Check if bullet trajectory crosses this line
+          if (!bullet.justBounced && this.lineIntersection(currentX, currentY, nextX, nextY, x1, y1, x2, y2)) {
+
+            // Calculate the normal vector for this edge
+            let edgeX = x2 - x1;
+            let edgeY = y2 - y1;
+            let normalX = -edgeY / Math.sqrt(edgeX * edgeX + edgeY * edgeY);
+            let normalY = edgeX / Math.sqrt(edgeX * edgeX + edgeY * edgeY);
+
+            // Ensure normal points inward (toward center)
+            let centerDirection = {
+              x: arenaCenter.x - currentX,
+              y: arenaCenter.y - currentY
+            };
+
+            if (normalX * centerDirection.x + normalY * centerDirection.y < 0) {
+              normalX = -normalX;
+              normalY = -normalY;
+            }
+
+            if (bullet.bounceCount < 1) {
+              this.reflectBulletHex(bullet, normalX, normalY);
+            } else {
+              bullet.setActive(false).setVisible(false);
+            }
+            return;
+          }
+        }
+
+        // Remove bullet if it's too far away from the entire hexagon area
+        let dx = bullet.x - arenaCenter.x;
+        let dy = bullet.y - arenaCenter.y;
+        let distanceToCenter = Math.sqrt(dx * dx + dy * dy);
+        if (distanceToCenter > wallRadius + 100) {
+          bullet.setActive(false).setVisible(false);
+        }
+      }
+
+      // Check if two line segments intersect
+      lineIntersection(x1, y1, x2, y2, x3, y3, x4, y4) {
+        let denom = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4);
+        if (Math.abs(denom) < 0.0001) return false; // Lines are parallel
+
+        let t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / denom;
+        let u = -((x1 - x2) * (y1 - y3) - (y1 - y2) * (x1 - x3)) / denom;
+
+        return t >= 0 && t <= 1 && u >= 0 && u <= 1;
+      } reflectBulletHex(bullet, normalX, normalY) {
+        let velX = bullet.body.velocity.x;
+        let velY = bullet.body.velocity.y;
+
+        // Reflection formula: v' = v - 2(v·n)n
+        let dotProduct = velX * normalX + velY * normalY;
+
+        bullet.body.velocity.x = velX - 2 * dotProduct * normalX;
+        bullet.body.velocity.y = velY - 2 * dotProduct * normalY;
+
+        // Move bullet back towards center to keep it inside the hexagon
+        let currentDistance = Math.sqrt((bullet.x - arenaCenter.x) ** 2 + (bullet.y - arenaCenter.y) ** 2);
+        let targetDistance = wallRadius - 30; // Safe distance inside
+        let factor = targetDistance / currentDistance;
+
+        bullet.setPosition(
+          arenaCenter.x + (bullet.x - arenaCenter.x) * factor,
+          arenaCenter.y + (bullet.y - arenaCenter.y) * factor
+        );
+
+        bullet.bounceCount++;
+        bullet.justBounced = true;
+
+        setTimeout(() => {
+          if (bullet && bullet.active) {
+            bullet.justBounced = false;
+          }
+        }, 100);
+      } handleBulletBounce(bullet, distanceToCenter) {
+        if (bullet.bounceCount < 1) {
+          let centerToBullet = {
+            x: bullet.x - arenaCenter.x,
+            y: bullet.y - arenaCenter.y
+          };
+          let length = Math.sqrt(centerToBullet.x * centerToBullet.x + centerToBullet.y * centerToBullet.y);
+          let normal = { x: centerToBullet.x / length, y: centerToBullet.y / length };
+
+          this.reflectBullet(bullet, normal);
+        } else {
+          bullet.setActive(false).setVisible(false);
+        }
+      }
+
+      reflectBullet(bullet, normal) {
+        let velocity = bullet.body.velocity;
+        let dotProduct = velocity.x * normal.x + velocity.y * normal.y;
+
+        if (dotProduct > 0) {
+          bullet.body.velocity.x = velocity.x - 2 * dotProduct * normal.x;
+          bullet.body.velocity.y = velocity.y - 2 * dotProduct * normal.y;
+
+          bullet.setPosition(
+            arenaCenter.x + normal.x * (wallRadius - 30),
+            arenaCenter.y + normal.y * (wallRadius - 30)
+          );
+
+          bullet.bounceCount++;
+          bullet.justBounced = true;
+
+          setTimeout(() => {
+            if (bullet && bullet.active) {
+              bullet.justBounced = false;
+            }
+          }, 100);
+        }
+      }
+
+      updatePlayer(p) {
+        if (p.keys.left.isDown) p.angVel -= p.angAccel;
+        else if (p.keys.right.isDown) p.angVel += p.angAccel;
+        p.angVel *= p.friction;
+        p.angVel = Phaser.Math.Clamp(p.angVel, -p.maxSpeed, p.maxSpeed);
+        p.angle += p.angVel;
+        p.sprite.setPosition(arenaCenter.x + arenaRadius * Math.cos(p.angle), arenaCenter.y + arenaRadius * Math.sin(p.angle));
+
+        if (p.keys.up.isDown) p.aimAngle -= 0.04;
+        if (p.keys.down.isDown) p.aimAngle += 0.04;
+        p.sprite.setRotation(p.aimAngle + Math.PI / 2);
+
+        p.laserGfx.clear().lineStyle(1, p.color, 0.4);
+        let laserLength = arenaRadius / 5;
+        let lx = p.sprite.x + Math.cos(p.aimAngle) * laserLength;
+        let ly = p.sprite.y + Math.sin(p.aimAngle) * laserLength;
+        p.laserGfx.lineBetween(p.sprite.x, p.sprite.y, lx, ly);
+      }
+
+      fire(p) {
+        let originalBullets = 0;
+        p.bullets.children.iterate(bullet => {
+          if (bullet && bullet.active && !bullet.isMultiplied) {
+            originalBullets++;
+          }
+        });
+
+        if (originalBullets < 2) {
+          let bullet = p.bullets.get();
+          if (bullet) {
+            bullet.setActive(true).setVisible(true).setTexture('bullet').setPosition(p.sprite.x, p.sprite.y);
+            this.physics.velocityFromRotation(p.aimAngle, 500, bullet.body.velocity);
+            bullet.bounceCount = 0;
+            bullet.justBounced = false;
+            bullet.multiplied = false;
+            bullet.isMultiplied = false;
+          }
+        }
+      }
+
+      multiplyBullet(player, bullet) {
+        if (!bullet.active || bullet.multiplied) return;
+
+        bullet.multiplied = true;
+        let currentVel = bullet.body.velocity;
+        let currentPos = { x: bullet.x, y: bullet.y };
+
+        let newBullet = player.bullets.get();
+        if (newBullet) {
+          newBullet.setActive(true).setVisible(true).setTexture('bullet');
+          newBullet.setPosition(currentPos.x, currentPos.y);
+
+          let speed = Math.sqrt(currentVel.x * currentVel.x + currentVel.y * currentVel.y);
+          let angle = Math.atan2(currentVel.y, currentVel.x) + Math.PI / 4;
+
+          newBullet.body.velocity.x = Math.cos(angle) * speed;
+          newBullet.body.velocity.y = Math.sin(angle) * speed;
+          newBullet.bounceCount = bullet.bounceCount;
+          newBullet.justBounced = false;
+          newBullet.multiplied = true;
+          newBullet.isMultiplied = true;
+        }
+
+        let originalAngle = Math.atan2(currentVel.y, currentVel.x) - Math.PI / 4;
+        let speed = Math.sqrt(currentVel.x * currentVel.x + currentVel.y * currentVel.y);
+        bullet.body.velocity.x = Math.cos(originalAngle) * speed;
+        bullet.body.velocity.y = Math.sin(originalAngle) * speed;
+      }
+
+      createHealthBar(x, y, color) {
+        this.add.graphics().fillStyle(0x555555).fillRect(x, y, 200, 20);
+        let barGraphics = this.add.graphics();
+        let barObj = { bar: barGraphics, x: x, y: y, color: color };
+        this.updateHealthBarVisual(barObj, 1);
+        return barObj;
+      }
+
+      updateHealthBarVisual(barObj, pct) {
+        barObj.bar.clear().fillStyle(barObj.color).fillRect(barObj.x, barObj.y, 200 * Math.max(0, pct), 20);
+      }
+
+      hit(player, bullet) {
+        if (!bullet.active || isGameOver) return;
+
+        bullet.setActive(false).setVisible(false).body.stop();
+        player.health--;
+        this.updateHealthBarVisual(player.healthBar, player.health / player.maxHealth);
+
+        if (player.health <= 0) {
+          isGameOver = true;
+
+          this.tweens.killTweensOf(player.sprite);
+          player.sprite.setAlpha(1);
+
+          let winnerName = player.name === 'P1' ? 'PLAYER 2' : 'PLAYER 1';
+
+          player1.bullets.clear(true, true);
+          player2.bullets.clear(true, true);
+
+          winText = this.add.text(400, 380, `${winnerName} WINS!`, {
+            fontSize: '40px', color: '#fff', backgroundColor: '#000', padding: { x: 20, y: 10 }
+          }).setOrigin(0.5);
+
+          restartText = this.add.text(400, 450, `Press 'N' to Restart | ESC for Menu`, {
+            fontSize: '20px', color: '#0f0', backgroundColor: '#222', padding: { x: 10, y: 5 }
+          }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+
+          restartText.on('pointerdown', () => this.resetGame());
+        } else {
+          this.tweens.add({
+            targets: player.sprite,
+            alpha: 0,
+            duration: 50,
+            yoyo: true,
+            repeat: 3,
+            onComplete: () => {
+              player.sprite.setAlpha(1);
+            }
+          });
+        }
+      }
+
+      resetGame() {
+        this.scene.restart();
+      }
+
+      resetPlayers() {
+        [player1, player2].forEach((p, index) => {
+          p.health = p.maxHealth;
+          p.angVel = 0;
+          p.angle = (index === 0) ? Math.PI : 0;
+          p.aimAngle = (index === 0) ? 0 : Math.PI;
+          p.sprite.setAlpha(1);
+          p.bullets.clear(true, true);
+          this.updateHealthBarVisual(p.healthBar, 1);
         });
       }
     }
 
-    function resetGame(scene) {
-      // 1. Reset Game State
-      isGameOver = false;
+    // Initialize game after class definitions
+    const config = {
+      type: Phaser.AUTO,
+      width: 800,
+      height: 800,
+      backgroundColor: '#333333',
+      physics: { default: 'arcade', arcade: { debug: false } },
+      scene: [MenuScene, GameScene]
+    };
 
-      // 2. Clear UI Elements
-      if (winText) winText.destroy();
-      if (restartText) restartText.destroy();
-
-      // 3. Reset Players
-      [player1, player2].forEach((p, index) => {
-        p.health = p.maxHealth;
-        p.angVel = 0;
-        p.angle = (index === 0) ? Math.PI : 0; // P1 Left, P2 Right
-        p.aimAngle = (index === 0) ? 0 : Math.PI; // P1 aims right, P2 aims left
-        p.sprite.setAlpha(1);
-        p.bullets.clear(true, true);
-        updateHealthBarVisual(p.healthBar, 1);
-      });
-    }
+    let game = new Phaser.Game(config);
   </script>
 </body>
 
