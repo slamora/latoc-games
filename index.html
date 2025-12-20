@@ -31,7 +31,7 @@
     };
 
     let game = new Phaser.Game(config);
-    let arenaCenter = { x: 400, y: 400 }, arenaRadius = 200, isGameOver = false;
+    let arenaCenter = { x: 400, y: 400 }, arenaRadius = 200, wallRadius = 300, isGameOver = false;
     let winText, restartText; // Variables to hold UI elements for cleanup
 
     let player1 = {
@@ -69,7 +69,11 @@
     }
 
     function create() {
-      this.add.graphics().lineStyle(4, 0x555555).strokeCircle(arenaCenter.x, arenaCenter.y, arenaRadius);
+      // Draw player trajectory circle (gray)
+      this.add.graphics().lineStyle(2, 0x555555).strokeCircle(arenaCenter.x, arenaCenter.y, arenaRadius);
+
+      // Draw outer wall circle (red/orange)
+      this.add.graphics().lineStyle(4, 0xff6600).strokeCircle(arenaCenter.x, arenaCenter.y, wallRadius);
 
       player1.sprite = this.physics.add.sprite(0, 0, 'p1');
       player2.sprite = this.physics.add.sprite(0, 0, 'p2');
@@ -105,8 +109,55 @@
 
       [player1.bullets, player2.bullets].forEach(group => {
         group.children.iterate(bullet => {
-          if (bullet && bullet.active && Phaser.Math.Distance.Between(arenaCenter.x, arenaCenter.y, bullet.x, bullet.y) > arenaRadius + 150) {
-            bullet.setActive(false).setVisible(false);
+          if (bullet && bullet.active) {
+            let distanceToCenter = Phaser.Math.Distance.Between(arenaCenter.x, arenaCenter.y, bullet.x, bullet.y);
+
+            // Check if bullet is hitting the outer wall
+            if (distanceToCenter >= wallRadius - 5 && !bullet.justBounced) {
+              if (bullet.bounceCount < 1) {
+                // First bounce - reflect velocity
+                let centerToBullet = {
+                  x: bullet.x - arenaCenter.x,
+                  y: bullet.y - arenaCenter.y
+                };
+                let length = Math.sqrt(centerToBullet.x * centerToBullet.x + centerToBullet.y * centerToBullet.y);
+                let normal = { x: centerToBullet.x / length, y: centerToBullet.y / length };
+
+                let velocity = bullet.body.velocity;
+                let dotProduct = velocity.x * normal.x + velocity.y * normal.y;
+
+                // Only reflect if bullet is moving towards the wall
+                if (dotProduct > 0) {
+                  // Reflect velocity around normal
+                  bullet.body.velocity.x = velocity.x - 2 * dotProduct * normal.x;
+                  bullet.body.velocity.y = velocity.y - 2 * dotProduct * normal.y;
+
+                  // Move bullet further inward to prevent getting stuck
+                  bullet.setPosition(
+                    arenaCenter.x + normal.x * (wallRadius - 30),
+                    arenaCenter.y + normal.y * (wallRadius - 30)
+                  );
+
+                  bullet.bounceCount++;
+                  bullet.justBounced = true;
+
+                  // Clear the justBounced flag after a short delay
+                  setTimeout(() => {
+                    if (bullet && bullet.active) {
+                      bullet.justBounced = false;
+                    }
+                  }, 100);
+                }
+              } else {
+                // Already bounced once, destroy bullet
+                bullet.setActive(false).setVisible(false);
+              }
+            }
+
+            // Remove bullet if too far from arena (backup cleanup)
+            if (distanceToCenter > wallRadius + 100) {
+              bullet.setActive(false).setVisible(false);
+            }
           }
         });
       });
@@ -136,6 +187,8 @@
       if (bullet) {
         bullet.setActive(true).setVisible(true).setTexture('bullet').setPosition(p.sprite.x, p.sprite.y);
         scene.physics.velocityFromRotation(p.aimAngle, 500, bullet.body.velocity);
+        bullet.bounceCount = 0; // Track number of bounces
+        bullet.justBounced = false; // Prevent immediate multiple bounces
       }
     }
 
