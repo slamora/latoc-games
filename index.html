@@ -65,6 +65,13 @@
       drawTankIcon(graphics, player2.color);
       graphics.generateTexture('p2', 30, 30);
       graphics.clear().fillStyle(0xffffff).fillCircle(5, 5, 5).generateTexture('bullet', 10, 10);
+
+      // Create multiplier obstacle texture (orange diamond)
+      graphics.clear().fillStyle(0xff6600);
+      graphics.fillTriangle(15, 5, 25, 15, 15, 25);
+      graphics.fillTriangle(15, 5, 5, 15, 15, 25);
+      graphics.generateTexture('multiplier', 30, 30);
+
       graphics.destroy();
     }
 
@@ -77,11 +84,16 @@
 
       player1.sprite = this.physics.add.sprite(0, 0, 'p1');
       player2.sprite = this.physics.add.sprite(0, 0, 'p2');
+
+      // Create multiplier obstacle in center
+      let multiplierObstacle = this.physics.add.sprite(arenaCenter.x, arenaCenter.y, 'multiplier');
+      multiplierObstacle.body.setImmovable(true);
+
       player1.laserGfx = this.add.graphics();
       player2.laserGfx = this.add.graphics();
 
-      player1.bullets = this.physics.add.group({ maxSize: 2 });
-      player2.bullets = this.physics.add.group({ maxSize: 2 });
+      player1.bullets = this.physics.add.group({ maxSize: 4 });
+      player2.bullets = this.physics.add.group({ maxSize: 4 });
 
       player1.healthBar = createHealthBar(this, 50, 50, player1.color);
       player2.healthBar = createHealthBar(this, 550, 50, player2.color);
@@ -108,6 +120,49 @@
       this.physics.add.overlap(player2.sprite, player2.bullets, (p, b) => {
         if (b.bounceCount > 0) hit(this, player2, b);
       });
+
+      // Multiplier obstacle collisions
+      this.physics.add.overlap(multiplierObstacle, player1.bullets, (obstacle, bullet) => {
+        multiplyBullet(this, player1, bullet);
+      });
+      this.physics.add.overlap(multiplierObstacle, player2.bullets, (obstacle, bullet) => {
+        multiplyBullet(this, player2, bullet);
+      });
+    }
+
+    function multiplyBullet(scene, player, bullet) {
+      if (!bullet.active || bullet.multiplied) return;
+
+      // Mark bullet as multiplied to prevent infinite multiplication
+      bullet.multiplied = true;
+
+      // Get current bullet properties
+      let currentVel = bullet.body.velocity;
+      let currentPos = { x: bullet.x, y: bullet.y };
+
+      // Create second bullet with slightly different angle
+      let newBullet = player.bullets.get();
+      if (newBullet) {
+        newBullet.setActive(true).setVisible(true).setTexture('bullet');
+        newBullet.setPosition(currentPos.x, currentPos.y);
+
+        // Calculate perpendicular velocity for the new bullet
+        let speed = Math.sqrt(currentVel.x * currentVel.x + currentVel.y * currentVel.y);
+        let angle = Math.atan2(currentVel.y, currentVel.x) + Math.PI / 4; // 45 degree offset
+
+        newBullet.body.velocity.x = Math.cos(angle) * speed;
+        newBullet.body.velocity.y = Math.sin(angle) * speed;
+        newBullet.bounceCount = bullet.bounceCount;
+        newBullet.justBounced = false;
+        newBullet.multiplied = true; // Prevent this bullet from multiplying again
+        newBullet.isMultiplied = true; // Mark as a multiplied bullet
+      }
+
+      // Modify original bullet trajectory slightly
+      let originalAngle = Math.atan2(currentVel.y, currentVel.x) - Math.PI / 4; // -45 degree offset
+      let speed = Math.sqrt(currentVel.x * currentVel.x + currentVel.y * currentVel.y);
+      bullet.body.velocity.x = Math.cos(originalAngle) * speed;
+      bullet.body.velocity.y = Math.sin(originalAngle) * speed;
     }
 
     function update() {
@@ -191,12 +246,25 @@
     }
 
     function fire(scene, p) {
-      let bullet = p.bullets.get();
-      if (bullet) {
-        bullet.setActive(true).setVisible(true).setTexture('bullet').setPosition(p.sprite.x, p.sprite.y);
-        scene.physics.velocityFromRotation(p.aimAngle, 500, bullet.body.velocity);
-        bullet.bounceCount = 0; // Track number of bounces
-        bullet.justBounced = false; // Prevent immediate multiple bounces
+      // Count only original bullets (not multiplied ones)
+      let originalBullets = 0;
+      p.bullets.children.iterate(bullet => {
+        if (bullet && bullet.active && !bullet.isMultiplied) {
+          originalBullets++;
+        }
+      });
+
+      // Allow firing if less than 2 original bullets
+      if (originalBullets < 2) {
+        let bullet = p.bullets.get();
+        if (bullet) {
+          bullet.setActive(true).setVisible(true).setTexture('bullet').setPosition(p.sprite.x, p.sprite.y);
+          scene.physics.velocityFromRotation(p.aimAngle, 500, bullet.body.velocity);
+          bullet.bounceCount = 0; // Track number of bounces
+          bullet.justBounced = false; // Prevent immediate multiple bounces
+          bullet.multiplied = false; // Track if bullet has been multiplied
+          bullet.isMultiplied = false; // Track if this bullet is a result of multiplication
+        }
       }
     }
 
