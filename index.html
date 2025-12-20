@@ -152,7 +152,8 @@
     }
 
     function hit(scene, player, bullet) {
-      if (!bullet.active) return;
+      if (!bullet.active || isGameOver) return;
+
       bullet.setActive(false).setVisible(false).body.stop();
       player.health--;
       updateHealthBarVisual(player.healthBar, player.health / player.maxHealth);
@@ -160,7 +161,13 @@
 
       if (player.health <= 0) {
         isGameOver = true;
+
+        // Determine winner based on who was hit
         let winnerName = player.name === 'P1' ? 'PLAYER 2' : 'PLAYER 1';
+
+        // Clear all remaining bullets to stop further collisions
+        player1.bullets.clear(true, true);
+        player2.bullets.clear(true, true);
 
         winText = scene.add.text(400, 380, `${winnerName} WINS!`, {
           fontSize: '40px', color: '#fff', backgroundColor: '#000', padding: { x: 20, y: 10 }
