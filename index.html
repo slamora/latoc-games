@@ -31,7 +31,8 @@
       angVel: 0, angAccel: 0.0006, friction: 0.96, maxSpeed: 0.05,
       health: 3, maxHealth: 3,
       aimAngle: Math.PI * 0,
-      laserGfx: null
+      laserGfx: null,
+      lastFireInput: false
     };
 
     let player2 = {
@@ -40,7 +41,8 @@
       angVel: 0, angAccel: 0.0006, friction: 0.96, maxSpeed: 0.05,
       health: 3, maxHealth: 3,
       aimAngle: Math.PI * 1,
-      laserGfx: null
+      laserGfx: null,
+      lastFireInput: false
     };
 
     // Menu Scene
@@ -141,6 +143,9 @@
         // Draw walls based on scenario
         this.createWalls();
 
+        // Create touch controls
+        this.createTouchControls();
+
         player1.sprite = this.physics.add.sprite(0, 0, 'p1');
         player2.sprite = this.physics.add.sprite(0, 0, 'p2');
 
@@ -221,6 +226,98 @@
         }
         graphics.closePath();
         graphics.strokePath();
+      }
+
+      createTouchControls() {
+        // Player 1 controls (left side)
+        this.p1Joystick = this.createJoystick(100, 600, 0x00ffff);
+        this.p1FireButton = this.createFireButton(200, 600, 0x00ffff, 'P1 FIRE');
+
+        // Player 2 controls (right side)
+        this.p2Joystick = this.createJoystick(700, 600, 0xff00ff);
+        this.p2FireButton = this.createFireButton(600, 600, 0xff00ff, 'P2 FIRE');
+
+        // Labels
+        this.add.text(100, 650, 'MOVE & AIM', { fontSize: '12px', fill: '#00ffff' }).setOrigin(0.5);
+        this.add.text(700, 650, 'MOVE & AIM', { fontSize: '12px', fill: '#ff00ff' }).setOrigin(0.5);
+      }
+
+      createJoystick(x, y, color) {
+        let joystick = {
+          base: this.add.circle(x, y, 40, color, 0.3),
+          stick: this.add.circle(x, y, 15, color, 0.8),
+          baseX: x,
+          baseY: y,
+          isDragging: false,
+          inputX: 0,
+          inputY: 0
+        };
+
+        joystick.stick.setInteractive({ useHandCursor: true, draggable: true });
+
+        joystick.stick.on('dragstart', () => {
+          joystick.isDragging = true;
+        });
+
+        joystick.stick.on('drag', (pointer, dragX, dragY) => {
+          let dx = dragX - joystick.baseX;
+          let dy = dragY - joystick.baseY;
+          let distance = Math.sqrt(dx * dx + dy * dy);
+
+          if (distance <= 35) {
+            joystick.stick.x = dragX;
+            joystick.stick.y = dragY;
+          } else {
+            let angle = Math.atan2(dy, dx);
+            joystick.stick.x = joystick.baseX + Math.cos(angle) * 35;
+            joystick.stick.y = joystick.baseY + Math.sin(angle) * 35;
+          }
+
+          joystick.inputX = (joystick.stick.x - joystick.baseX) / 35;
+          joystick.inputY = (joystick.stick.y - joystick.baseY) / 35;
+        });
+
+        joystick.stick.on('dragend', () => {
+          joystick.isDragging = false;
+          joystick.stick.x = joystick.baseX;
+          joystick.stick.y = joystick.baseY;
+          joystick.inputX = 0;
+          joystick.inputY = 0;
+        });
+
+        return joystick;
+      }
+
+      createFireButton(x, y, color, text) {
+        let button = this.add.circle(x, y, 35, color, 0.6);
+        let buttonText = this.add.text(x, y, text, {
+          fontSize: '12px', fill: '#fff', fontWeight: 'bold'
+        }).setOrigin(0.5);
+
+        button.setInteractive({ useHandCursor: true });
+
+        let fireButton = {
+          button: button,
+          text: buttonText,
+          isPressed: false
+        };
+
+        button.on('pointerdown', () => {
+          fireButton.isPressed = true;
+          button.setAlpha(1);
+        });
+
+        button.on('pointerup', () => {
+          fireButton.isPressed = false;
+          button.setAlpha(0.6);
+        });
+
+        button.on('pointerout', () => {
+          fireButton.isPressed = false;
+          button.setAlpha(0.6);
+        });
+
+        return fireButton;
       }
 
       update() {
@@ -394,16 +491,65 @@
       }
 
       updatePlayer(p) {
-        if (p.keys.left.isDown) p.angVel -= p.angAccel;
-        else if (p.keys.right.isDown) p.angVel += p.angAccel;
+        // Keyboard controls
+        let keyboardMove = 0;
+        let keyboardAim = 0;
+        let keyboardFire = false;
+
+        if (p.keys.left.isDown) keyboardMove -= 1;
+        if (p.keys.right.isDown) keyboardMove += 1;
+        if (p.keys.up.isDown) keyboardAim -= 1;
+        if (p.keys.down.isDown) keyboardAim += 1;
+        if (p.keys.fire.isDown) keyboardFire = true;
+
+        // Touch controls
+        let touchMoveX = 0;
+        let touchMoveY = 0;
+        let touchFire = false;
+
+        if (p === player1) {
+          touchMoveX = this.p1Joystick.inputX;
+          touchMoveY = this.p1Joystick.inputY;
+          touchFire = this.p1FireButton.isPressed;
+        } else if (p === player2) {
+          touchMoveX = this.p2Joystick.inputX;
+          touchMoveY = this.p2Joystick.inputY;
+          touchFire = this.p2FireButton.isPressed;
+        }
+
+        // Combine keyboard and touch inputs for movement
+        let moveInput = keyboardMove + touchMoveX;
+
+        // For aiming, use joystick angle when touched, otherwise keyboard
+        let aimInput = keyboardAim;
+        if (Math.abs(touchMoveX) > 0.1 || Math.abs(touchMoveY) > 0.1) {
+          // Calculate aim angle from joystick direction
+          let joystickAngle = Math.atan2(touchMoveY, touchMoveX);
+          p.aimAngle = joystickAngle;
+        } else if (Math.abs(aimInput) > 0.1) {
+          // Use keyboard aiming when joystick not active
+          p.aimAngle += aimInput * 0.04;
+        }
+
+        // Fire input
+        let fireInput = keyboardFire || touchFire;
+
+        // Apply movement
+        if (moveInput < -0.1) p.angVel -= p.angAccel;
+        else if (moveInput > 0.1) p.angVel += p.angAccel;
+
         p.angVel *= p.friction;
         p.angVel = Phaser.Math.Clamp(p.angVel, -p.maxSpeed, p.maxSpeed);
         p.angle += p.angVel;
         p.sprite.setPosition(arenaCenter.x + arenaRadius * Math.cos(p.angle), arenaCenter.y + arenaRadius * Math.sin(p.angle));
 
-        if (p.keys.up.isDown) p.aimAngle -= 0.04;
-        if (p.keys.down.isDown) p.aimAngle += 0.04;
         p.sprite.setRotation(p.aimAngle + Math.PI / 2);
+
+        // Fire handling (prevent rapid fire from touch)
+        if (fireInput && !p.lastFireInput) {
+          if (!isGameOver) this.fire(p);
+        }
+        p.lastFireInput = fireInput;
 
         p.laserGfx.clear().lineStyle(1, p.color, 0.4);
         let laserLength = arenaRadius / 5;
@@ -527,6 +673,7 @@
           p.aimAngle = (index === 0) ? 0 : Math.PI;
           p.sprite.setAlpha(1);
           p.bullets.clear(true, true);
+          p.lastFireInput = false; // Reset fire input tracking
           this.updateHealthBarVisual(p.healthBar, 1);
         });
       }
