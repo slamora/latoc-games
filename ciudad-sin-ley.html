@@ -1,0 +1,690 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+  <meta charset="UTF-8">
+  <title>Ciudad sin Ley</title>
+  <style>
+    body {
+      margin: 0;
+      background-color: #111;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      overflow: hidden;
+    }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser.min.js"></script>
+</head>
+
+<body>
+  <script>
+    // ── Constants ──────────────────────────────────────────────────────────────
+    const CANVAS_W = 800;
+    const CANVAS_H = 800;
+    const ARENA_SIZE = 600;
+    const ARENA_X = (CANVAS_W - ARENA_SIZE) / 2;
+    const ARENA_Y = (CANVAS_H - ARENA_SIZE) / 2;
+    const PLAYER_RADIUS = 16;
+    const PLAYER_SPEED = 220;
+    const AIM_ROTATE_SPEED = 2.5;
+    const AIM_LINE_LEN = 40;
+    const BULLET_SPEED = 500;
+    const BULLET_RADIUS = 5;
+    const ENEMY_RADIUS = 14;
+    const ENEMY_BASE_SPEED = 70;
+    const ENEMY_SPEED_MAX = 200;
+    const MAX_LIVES = 3;
+    const POWERUP_RADIUS = 12;
+    const SHOT_THRESHOLDS = [10, 30, 60, 100]; // puntuación que activa cada mejora de disparo
+    const POWERUP_DURATION = 10000;             // ms disponibles para recoger el power-up
+    const BULLET_SPREAD = 11;    // px between parallel bullets
+    const MAX_BULLET_COUNT = 5;
+    const HOF_KEY = 'ciudadSinLeyHOF';
+    const HOF_SIZE = 5;
+
+    // ── Hall of Fame helpers ───────────────────────────────────────────────────
+    function loadHOF() {
+      try { return JSON.parse(localStorage.getItem(HOF_KEY)) || []; }
+      catch { return []; }
+    }
+    function saveHOF(hof) {
+      localStorage.setItem(HOF_KEY, JSON.stringify(hof));
+    }
+    function qualifiesHOF(score) {
+      if (score <= 0) return false;
+      const hof = loadHOF();
+      return hof.length < HOF_SIZE || score > hof[hof.length - 1].score;
+    }
+    function addToHOF(name, score) {
+      const hof = loadHOF();
+      hof.push({ name: name.slice(0, 16), score });
+      hof.sort((a, b) => b.score - a.score);
+      hof.splice(HOF_SIZE);
+      saveHOF(hof);
+      return hof;
+    }
+
+    // ── GameScene ──────────────────────────────────────────────────────────────
+    class GameScene extends Phaser.Scene {
+      constructor() { super({ key: 'GameScene' }); }
+
+      create() {
+        this.score = 0;
+        this.lives = MAX_LIVES;
+        this.gameOver = false;
+        this.invincible = false;
+        this.invTimer = 0;
+        this.spawnTimer = 2000; // ms before first spawn
+        this.enemies = [];
+        this.bullets = [];
+        this.spaceWasDown = false;
+        this.mouseWasDown = false;
+        this.bulletCount = 1;
+        this.powerup = null;  // { x, y, type } | null
+        this.powerupExpiry = 0;     // ms restantes antes de desaparecer
+        this.pendingPowerups = [];    // cola de tipos pendientes de aparecer
+        this.shotThresholdIdx = 0;     // siguiente umbral de disparo por cruzar
+        this.nextLifeScore = 20;    // puntuación en la que aparece el siguiente power-up de vida
+
+        // Arena
+        const arena = this.add.graphics();
+        arena.fillStyle(0x2a2a2a, 1);
+        arena.fillRect(ARENA_X, ARENA_Y, ARENA_SIZE, ARENA_SIZE);
+        arena.lineStyle(3, 0xffd700, 1);
+        arena.strokeRect(ARENA_X, ARENA_Y, ARENA_SIZE, ARENA_SIZE);
+
+        // Layered graphics (draw order matters)
+        this.enemyGfx = this.add.graphics();
+        this.powerupGfx = this.add.graphics();
+        this.bulletGfx = this.add.graphics();
+        this.playerGfx = this.add.graphics();
+
+        // Player
+        this.playerX = CANVAS_W / 2;
+        this.playerY = CANVAS_H / 2;
+        this.aimAngle = 0;
+
+        // HUD
+        this.scoreTxt = this.add.text(ARENA_X, ARENA_Y - 30, 'Puntuación: 0', {
+          fontSize: '18px', fill: '#ffffff', fontFamily: 'monospace'
+        });
+        this.livesTxt = this.add.text(ARENA_X + ARENA_SIZE, ARENA_Y - 30, this.heartsStr(), {
+          fontSize: '18px', fontFamily: 'monospace'
+        }).setOrigin(1, 0);
+        this.powerTxt = this.add.text(CANVAS_W / 2, ARENA_Y - 30, '🔫 x1', {
+          fontSize: '16px', fill: '#ff88ff', fontFamily: 'monospace'
+        }).setOrigin(0.5, 0);
+
+        // Keys (V/B removed — aiming is now mouse-driven)
+        this.cursors = this.input.keyboard.createCursorKeys();
+        this.keySpace = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
+
+        // Hide the default cursor over the canvas
+        this.input.setDefaultCursor('none');
+      }
+
+      heartsStr() {
+        return '❤️'.repeat(this.lives) + '🖤'.repeat(MAX_LIVES - this.lives);
+      }
+
+      // ── Difficulty formulas ──
+      spawnInterval() { return Math.max(500, 3000 - this.score * 40); }
+      maxEnemies() { return Math.floor(1 + this.score / 5); }
+      enemySpeed() { return Math.min(ENEMY_SPEED_MAX, ENEMY_BASE_SPEED + this.score * 3); }
+
+      spawnEnemy() {
+        const side = Phaser.Math.Between(0, 3);
+        let x, y;
+        if (side === 0) { x = Phaser.Math.Between(ARENA_X, ARENA_X + ARENA_SIZE); y = ARENA_Y; }
+        else if (side === 1) { x = ARENA_X + ARENA_SIZE; y = Phaser.Math.Between(ARENA_Y, ARENA_Y + ARENA_SIZE); }
+        else if (side === 2) { x = Phaser.Math.Between(ARENA_X, ARENA_X + ARENA_SIZE); y = ARENA_Y + ARENA_SIZE; }
+        else { x = ARENA_X; y = Phaser.Math.Between(ARENA_Y, ARENA_Y + ARENA_SIZE); }
+        this.enemies.push({ x, y, speed: this.enemySpeed() });
+      }
+
+      spawnPowerup(type) {
+        const margin = POWERUP_RADIUS + 20;
+        this.powerup = {
+          x: Phaser.Math.Between(ARENA_X + margin, ARENA_X + ARENA_SIZE - margin),
+          y: Phaser.Math.Between(ARENA_Y + margin, ARENA_Y + ARENA_SIZE - margin),
+          type: type
+        };
+        this.powerupExpiry = POWERUP_DURATION;
+      }
+
+      // ── Draw helpers ────────────────────────────────────────────────────────
+      drawPowerup(time) {
+        this.powerupGfx.clear();
+        if (!this.powerup) return;
+        const { x, y, type } = this.powerup;
+        const pulse = 0.65 + 0.35 * Math.sin(time / 280);
+        const timeRatio = Math.max(0, this.powerupExpiry / POWERUP_DURATION); // 1→0
+        const color = type === 'shot' ? 0xff00ff : 0x00cc44;
+
+        // Glow ring
+        this.powerupGfx.fillStyle(color, pulse * 0.35);
+        this.powerupGfx.fillCircle(x, y, POWERUP_RADIUS + 4);
+        // Body
+        this.powerupGfx.fillStyle(color, pulse);
+        this.powerupGfx.fillCircle(x, y, POWERUP_RADIUS);
+
+        if (type === 'shot') {
+          // ✦ (cross + diagonals)
+          const r = POWERUP_RADIUS * 0.55, rd = r * 0.7;
+          this.powerupGfx.lineStyle(2, 0xffffff, 1);
+          this.powerupGfx.beginPath();
+          this.powerupGfx.moveTo(x - r, y); this.powerupGfx.lineTo(x + r, y);
+          this.powerupGfx.moveTo(x, y - r); this.powerupGfx.lineTo(x, y + r);
+          this.powerupGfx.strokePath();
+          this.powerupGfx.beginPath();
+          this.powerupGfx.moveTo(x - rd, y - rd); this.powerupGfx.lineTo(x + rd, y + rd);
+          this.powerupGfx.moveTo(x + rd, y - rd); this.powerupGfx.lineTo(x - rd, y + rd);
+          this.powerupGfx.strokePath();
+        } else {
+          // Cruz médica (vida)
+          const rh = POWERUP_RADIUS * 0.58, rw = POWERUP_RADIUS * 0.22;
+          this.powerupGfx.fillStyle(0xffffff, 1);
+          this.powerupGfx.fillRect(x - rw, y - rh, rw * 2, rh * 2);
+          this.powerupGfx.fillRect(x - rh, y - rw, rh * 2, rw * 2);
+        }
+
+        // Anillo de expiración: se encoge conforme pasa el tiempo
+        const expiryR = POWERUP_RADIUS + 8 + 16 * timeRatio;
+        this.powerupGfx.lineStyle(2, 0xffffff, timeRatio * 0.85);
+        this.powerupGfx.strokeCircle(x, y, expiryR);
+      }
+
+      drawPlayer() {
+        this.playerGfx.clear();
+        const a = (this.invincible && Math.floor(this.invTimer * 8) % 2 === 0) ? 0.25 : 1;
+        const c = Math.cos(this.aimAngle), s = Math.sin(this.aimAngle);
+        // Rotate local coords (lx = forward/aim, ly = left) → world
+        const W = (lx, ly) => ({
+          x: this.playerX + lx * c - ly * s,
+          y: this.playerY + lx * s + ly * c
+        });
+
+        // ── Pistola (barril) ─────────────────────────────────────────
+        const gb = [W(8, -2), W(22, -2), W(22, 2), W(8, 2)];
+        this.playerGfx.fillStyle(0x555555, a);
+        this.playerGfx.fillTriangle(gb[0].x, gb[0].y, gb[1].x, gb[1].y, gb[2].x, gb[2].y);
+        this.playerGfx.fillTriangle(gb[0].x, gb[0].y, gb[2].x, gb[2].y, gb[3].x, gb[3].y);
+        // Reflejo del cañón
+        const bh1 = W(9, -1), bh2 = W(22, -1);
+        this.playerGfx.lineStyle(1, 0x999999, a);
+        this.playerGfx.beginPath();
+        this.playerGfx.moveTo(bh1.x, bh1.y);
+        this.playerGfx.lineTo(bh2.x, bh2.y);
+        this.playerGfx.strokePath();
+        // Culata (grip)
+        const gg = [W(8, 2), W(11, 2), W(11, 6), W(8, 6)];
+        this.playerGfx.fillStyle(0x444444, a);
+        this.playerGfx.fillTriangle(gg[0].x, gg[0].y, gg[1].x, gg[1].y, gg[2].x, gg[2].y);
+        this.playerGfx.fillTriangle(gg[0].x, gg[0].y, gg[2].x, gg[2].y, gg[3].x, gg[3].y);
+
+        // ── Cuerpo / chaqueta (vista cenital) ───────────────────────
+        this.playerGfx.fillStyle(0x3a5a28, a);
+        this.playerGfx.fillCircle(this.playerX, this.playerY, 9);
+        this.playerGfx.lineStyle(1, 0x2a4018, a);
+        this.playerGfx.strokeCircle(this.playerX, this.playerY, 9);
+
+        // ── Casco (base) ─────────────────────────────────────────────
+        const hc = W(1, 0);
+        this.playerGfx.fillStyle(0x263420, a);
+        this.playerGfx.fillCircle(hc.x, hc.y, 7);
+
+        // ── Casco (mitad delantera, más clara) ───────────────────────
+        this.playerGfx.fillStyle(0x3a4c28, a);
+        this.playerGfx.slice(
+          hc.x, hc.y, 7,
+          this.aimAngle - Math.PI / 2,
+          this.aimAngle + Math.PI / 2,
+          false
+        );
+        this.playerGfx.fillPath();
+
+        // ── Ala / visera del casco ───────────────────────────────────
+        this.playerGfx.lineStyle(3, 0x18240e, a);
+        this.playerGfx.beginPath();
+        this.playerGfx.arc(
+          hc.x, hc.y, 8.5,
+          this.aimAngle - Math.PI / 2,
+          this.aimAngle + Math.PI / 2,
+          false
+        );
+        this.playerGfx.strokePath();
+
+        // ── Visor (franja oscura frontal) ────────────────────────────
+        const v1 = W(7, -3.5), v2 = W(7, 3.5);
+        this.playerGfx.lineStyle(4, 0x1a3050, a);
+        this.playerGfx.beginPath();
+        this.playerGfx.moveTo(v1.x, v1.y);
+        this.playerGfx.lineTo(v2.x, v2.y);
+        this.playerGfx.strokePath();
+        // Reflejo del visor
+        const vr1 = W(6.5, -2), vr2 = W(6.5, -0.5);
+        this.playerGfx.lineStyle(1.5, 0x5588aa, a * 0.7);
+        this.playerGfx.beginPath();
+        this.playerGfx.moveTo(vr1.x, vr1.y);
+        this.playerGfx.lineTo(vr2.x, vr2.y);
+        this.playerGfx.strokePath();
+
+        // ── Línea de mira (desde la boca del cañón) ──────────────────
+        const al1 = W(22, 0), al2 = W(22 + AIM_LINE_LEN, 0);
+        this.playerGfx.lineStyle(2, 0xffffff, a * 0.55);
+        this.playerGfx.beginPath();
+        this.playerGfx.moveTo(al1.x, al1.y);
+        this.playerGfx.lineTo(al2.x, al2.y);
+        this.playerGfx.strokePath();
+      }
+
+      drawEnemies() {
+        this.enemyGfx.clear();
+        for (const e of this.enemies) {
+          // Ángulo hacia el jugador (el ogro siempre mira al jugador)
+          const ang = Math.atan2(this.playerY - e.y, this.playerX - e.x);
+          const ec = Math.cos(ang), es = Math.sin(ang);
+          const EW = (lx, ly) => ({
+            x: e.x + lx * ec - ly * es,
+            y: e.y + lx * es + ly * ec
+          });
+
+          // ── Sombra / aura de amenaza ─────────────────────────────
+          this.enemyGfx.fillStyle(0x330000, 0.35);
+          this.enemyGfx.fillCircle(e.x, e.y, ENEMY_RADIUS + 4);
+
+          // ── Brazos forzudos (dibujados ANTES del cuerpo) ─────────
+          const armClr = 0x4a7a1e, armDrk = 0x2a4e0a;
+
+          // — Brazo izquierdo: un solo bloque ancho + puño —
+          const la = [EW(-2, -9), EW(2, -9), EW(7, -17), EW(4, -17)];
+          this.enemyGfx.fillStyle(armClr, 1);
+          this.enemyGfx.fillTriangle(la[0].x, la[0].y, la[1].x, la[1].y, la[2].x, la[2].y);
+          this.enemyGfx.fillTriangle(la[0].x, la[0].y, la[2].x, la[2].y, la[3].x, la[3].y);
+          this.enemyGfx.lineStyle(1, armDrk, 1);
+          this.enemyGfx.beginPath();
+          this.enemyGfx.moveTo(la[0].x, la[0].y); this.enemyGfx.lineTo(la[3].x, la[3].y);
+          this.enemyGfx.moveTo(la[1].x, la[1].y); this.enemyGfx.lineTo(la[2].x, la[2].y);
+          this.enemyGfx.strokePath();
+          const lFist = EW(7.5, -15.5);
+          this.enemyGfx.fillStyle(0x5a9020, 1);
+          this.enemyGfx.fillCircle(lFist.x, lFist.y, 5.5);
+          this.enemyGfx.lineStyle(1, armDrk, 1);
+          this.enemyGfx.strokeCircle(lFist.x, lFist.y, 5.5);
+
+          // — Brazo derecho: espejo —
+          const ra = [EW(-2, 9), EW(2, 9), EW(7, 17), EW(4, 17)];
+          this.enemyGfx.fillStyle(armClr, 1);
+          this.enemyGfx.fillTriangle(ra[0].x, ra[0].y, ra[1].x, ra[1].y, ra[2].x, ra[2].y);
+          this.enemyGfx.fillTriangle(ra[0].x, ra[0].y, ra[2].x, ra[2].y, ra[3].x, ra[3].y);
+          this.enemyGfx.lineStyle(1, armDrk, 1);
+          this.enemyGfx.beginPath();
+          this.enemyGfx.moveTo(ra[0].x, ra[0].y); this.enemyGfx.lineTo(ra[3].x, ra[3].y);
+          this.enemyGfx.moveTo(ra[1].x, ra[1].y); this.enemyGfx.lineTo(ra[2].x, ra[2].y);
+          this.enemyGfx.strokePath();
+          const rFist = EW(7.5, 15.5);
+          this.enemyGfx.fillStyle(0x5a9020, 1);
+          this.enemyGfx.fillCircle(rFist.x, rFist.y, 5.5);
+          this.enemyGfx.lineStyle(1, armDrk, 1);
+          this.enemyGfx.strokeCircle(rFist.x, rFist.y, 5.5);
+
+          // ── Cuerpo (verde ogro) ──────────────────────────────────
+          this.enemyGfx.fillStyle(0x4a7a1e, 1);
+          this.enemyGfx.fillCircle(e.x, e.y, ENEMY_RADIUS);
+          this.enemyGfx.lineStyle(1.5, 0x2a4e0a, 1);
+          this.enemyGfx.strokeCircle(e.x, e.y, ENEMY_RADIUS);
+
+          // ── Cabeza (ligeramente adelantada) ─────────────────────
+          const head = EW(4, 0);
+          this.enemyGfx.fillStyle(0x5a8a22, 1);
+          this.enemyGfx.fillCircle(head.x, head.y, 8);
+          this.enemyGfx.lineStyle(1, 0x2a4e0a, 1);
+          this.enemyGfx.strokeCircle(head.x, head.y, 8);
+
+          // ── Ojos (rojos, furiosos) ───────────────────────────────
+          const el = EW(7, -3), er = EW(7, 3);
+          this.enemyGfx.fillStyle(0xff2200, 1);
+          this.enemyGfx.fillCircle(el.x, el.y, 2.5);
+          this.enemyGfx.fillCircle(er.x, er.y, 2.5);
+          // Pupila negra
+          this.enemyGfx.fillStyle(0x000000, 1);
+          this.enemyGfx.fillCircle(el.x + ec * 0.8, el.y + es * 0.8, 1.2);
+          this.enemyGfx.fillCircle(er.x + ec * 0.8, er.y + es * 0.8, 1.2);
+
+          // ── Cejas fruncidas ──────────────────────────────────────
+          const bl1 = EW(6, -4.5), bl2 = EW(8.5, -1.8);
+          const br1 = EW(6, 4.5), br2 = EW(8.5, 1.8);
+          this.enemyGfx.lineStyle(2, 0x1a2e08, 1);
+          this.enemyGfx.beginPath();
+          this.enemyGfx.moveTo(bl1.x, bl1.y); this.enemyGfx.lineTo(bl2.x, bl2.y);
+          this.enemyGfx.strokePath();
+          this.enemyGfx.beginPath();
+          this.enemyGfx.moveTo(br1.x, br1.y); this.enemyGfx.lineTo(br2.x, br2.y);
+          this.enemyGfx.strokePath();
+
+          // ── Colmillos ────────────────────────────────────────────
+          const f1a = EW(9.5, -2), f1b = EW(12, -1.5);
+          const f2a = EW(9.5, 2), f2b = EW(12, 1.5);
+          this.enemyGfx.fillStyle(0xeeeecc, 1);
+          this.enemyGfx.fillTriangle(
+            f1a.x, f1a.y,
+            EW(9.5, -3.5).x, EW(9.5, -3.5).y,
+            f1b.x, f1b.y
+          );
+          this.enemyGfx.fillTriangle(
+            f2a.x, f2a.y,
+            EW(9.5, 3.5).x, EW(9.5, 3.5).y,
+            f2b.x, f2b.y
+          );
+        }
+      }
+
+      drawBullets() {
+        this.bulletGfx.clear();
+        this.bulletGfx.fillStyle(0xffff00, 1);
+        for (const b of this.bullets) {
+          this.bulletGfx.fillCircle(b.x, b.y, BULLET_RADIUS);
+        }
+      }
+
+      // ── Main loop ────────────────────────────────────────────────────────────
+      update(time, delta) {
+        if (this.gameOver) return;
+        const dt = delta / 1000;
+
+        // Player movement
+        let dx = 0, dy = 0;
+        if (this.cursors.left.isDown) dx -= 1;
+        if (this.cursors.right.isDown) dx += 1;
+        if (this.cursors.up.isDown) dy -= 1;
+        if (this.cursors.down.isDown) dy += 1;
+        if (dx !== 0 && dy !== 0) { dx *= Math.SQRT1_2; dy *= Math.SQRT1_2; }
+
+        this.playerX += dx * PLAYER_SPEED * dt;
+        this.playerY += dy * PLAYER_SPEED * dt;
+        this.playerX = Phaser.Math.Clamp(this.playerX, ARENA_X + PLAYER_RADIUS, ARENA_X + ARENA_SIZE - PLAYER_RADIUS);
+        this.playerY = Phaser.Math.Clamp(this.playerY, ARENA_Y + PLAYER_RADIUS, ARENA_Y + ARENA_SIZE - PLAYER_RADIUS);
+
+        // Aim: angle from player to mouse pointer
+        const pointer = this.input.activePointer;
+        this.aimAngle = Math.atan2(pointer.y - this.playerY, pointer.x - this.playerX);
+
+        // Shoot: spacebar OR left mouse button (press, not hold)
+        const spaceDown = this.keySpace.isDown;
+        const mouseDown = pointer.isDown;
+        const fireNow = (spaceDown && !this.spaceWasDown) || (mouseDown && !this.mouseWasDown);
+        if (fireNow) {
+          const perp = this.aimAngle + Math.PI / 2;
+          const n = this.bulletCount;
+          for (let i = 0; i < n; i++) {
+            const offset = (i - (n - 1) / 2) * BULLET_SPREAD;
+            const ox = Math.cos(perp) * offset;
+            const oy = Math.sin(perp) * offset;
+            this.bullets.push({
+              x: this.playerX + Math.cos(this.aimAngle) * (PLAYER_RADIUS + BULLET_RADIUS + 2) + ox,
+              y: this.playerY + Math.sin(this.aimAngle) * (PLAYER_RADIUS + BULLET_RADIUS + 2) + oy,
+              vx: Math.cos(this.aimAngle) * BULLET_SPEED,
+              vy: Math.sin(this.aimAngle) * BULLET_SPEED
+            });
+          }
+        }
+        this.spaceWasDown = spaceDown;
+        this.mouseWasDown = mouseDown;
+
+        // Move bullets; remove out-of-arena
+        this.bullets = this.bullets.filter(b => {
+          b.x += b.vx * dt;
+          b.y += b.vy * dt;
+          return b.x >= ARENA_X && b.x <= ARENA_X + ARENA_SIZE &&
+            b.y >= ARENA_Y && b.y <= ARENA_Y + ARENA_SIZE;
+        });
+
+        // Power-up: disparadores por puntuación → cola
+        while (this.shotThresholdIdx < SHOT_THRESHOLDS.length &&
+          this.score >= SHOT_THRESHOLDS[this.shotThresholdIdx]) {
+          this.pendingPowerups.push('shot');
+          this.shotThresholdIdx++;
+        }
+        while (this.score >= this.nextLifeScore) {
+          if (this.lives < MAX_LIVES) this.pendingPowerups.push('life');
+          this.nextLifeScore += 25;
+        }
+
+        // Sacar de la cola si la pantalla está libre
+        if (!this.powerup && this.pendingPowerups.length > 0) {
+          this.spawnPowerup(this.pendingPowerups.shift());
+        }
+
+        // Expiración
+        if (this.powerup) {
+          this.powerupExpiry -= delta;
+          if (this.powerupExpiry <= 0) this.powerup = null;
+        }
+
+        // Recogida
+        if (this.powerup) {
+          if (Math.hypot(this.playerX - this.powerup.x, this.playerY - this.powerup.y) < PLAYER_RADIUS + POWERUP_RADIUS) {
+            if (this.powerup.type === 'shot') {
+              this.bulletCount = Math.min(MAX_BULLET_COUNT, this.bulletCount + 1);
+              this.powerTxt.setText('🔫 x' + this.bulletCount);
+            } else {
+              this.lives = Math.min(MAX_LIVES, this.lives + 1);
+              this.livesTxt.setText(this.heartsStr());
+            }
+            this.powerup = null;
+          }
+        }
+
+        // Spawn enemies
+        this.spawnTimer -= delta;
+        if (this.spawnTimer <= 0) {
+          if (this.enemies.length < this.maxEnemies()) this.spawnEnemy();
+          this.spawnTimer = this.spawnInterval();
+        }
+
+        // Move enemies toward player
+        for (const e of this.enemies) {
+          const ang = Math.atan2(this.playerY - e.y, this.playerX - e.x);
+          e.x += Math.cos(ang) * e.speed * dt;
+          e.y += Math.sin(ang) * e.speed * dt;
+        }
+
+        // Bullet ↔ enemy collisions
+        const deadEnemies = new Set();
+        const deadBullets = new Set();
+        for (let bi = 0; bi < this.bullets.length; bi++) {
+          for (let ei = 0; ei < this.enemies.length; ei++) {
+            if (deadEnemies.has(ei)) continue;
+            const b = this.bullets[bi], e = this.enemies[ei];
+            if (Math.hypot(b.x - e.x, b.y - e.y) < BULLET_RADIUS + ENEMY_RADIUS) {
+              deadEnemies.add(ei);
+              deadBullets.add(bi);
+            }
+          }
+        }
+        if (deadEnemies.size > 0) {
+          this.score += deadEnemies.size;
+          this.enemies = this.enemies.filter((_, i) => !deadEnemies.has(i));
+          this.bullets = this.bullets.filter((_, i) => !deadBullets.has(i));
+          this.scoreTxt.setText('Puntuación: ' + this.score);
+        }
+
+        // Enemy ↔ player collisions
+        if (!this.invincible) {
+          const hit = this.enemies.findIndex(e =>
+            Math.hypot(e.x - this.playerX, e.y - this.playerY) < ENEMY_RADIUS + PLAYER_RADIUS
+          );
+          if (hit !== -1) {
+            this.lives--;
+            this.livesTxt.setText(this.heartsStr());
+            if (this.lives <= 0) {
+              this.gameOver = true;
+              this.drawPlayer(); this.drawEnemies(); this.drawBullets();
+              this.scene.start('GameOverScene', { score: this.score });
+              return;
+            }
+            // Brief invincibility + clear enemies for breathing room
+            this.invincible = true;
+            this.invTimer = 2;
+            this.enemies = [];
+          }
+        }
+        if (this.invincible) {
+          this.invTimer -= dt;
+          if (this.invTimer <= 0) this.invincible = false;
+        }
+
+        this.drawPlayer();
+        this.drawEnemies();
+        this.drawPowerup(time);
+        this.drawBullets();
+      }
+    }
+
+    // ── GameOverScene ──────────────────────────────────────────────────────────
+    class GameOverScene extends Phaser.Scene {
+      constructor() { super({ key: 'GameOverScene' }); }
+
+      create(data) {
+        this.input.setDefaultCursor('default');
+        this.finalScore = data.score;
+        const cx = CANVAS_W / 2;
+
+        this.add.text(cx, 150, 'GAME OVER', {
+          fontSize: '52px', fill: '#ff3300', fontFamily: 'monospace', fontStyle: 'bold'
+        }).setOrigin(0.5);
+
+        this.add.text(cx, 240, `Puntuación: ${this.finalScore}`, {
+          fontSize: '28px', fill: '#ffffff', fontFamily: 'monospace'
+        }).setOrigin(0.5);
+
+        if (qualifiesHOF(this.finalScore)) {
+          this.showNameEntry(cx);
+        } else {
+          this.showHOF(cx, loadHOF(), 320);
+          this.showRestart(cx, 580);
+        }
+      }
+
+      showNameEntry(cx) {
+        this.add.text(cx, 318, '¡Estás en el Hall of Fame!', {
+          fontSize: '22px', fill: '#ffd700', fontFamily: 'monospace'
+        }).setOrigin(0.5);
+
+        this.add.text(cx, 362, 'Introduce tu nombre:', {
+          fontSize: '18px', fill: '#cccccc', fontFamily: 'monospace'
+        }).setOrigin(0.5);
+
+        // HTML overlay input (positioned over the Phaser canvas)
+        const canvas = document.querySelector('canvas');
+        const rect = canvas.getBoundingClientRect();
+        const sx = rect.width / CANVAS_W;
+        const sy = rect.height / CANVAS_H;
+
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.maxLength = 16;
+        input.placeholder = 'Tu nombre';
+        Object.assign(input.style, {
+          position: 'fixed',
+          left: (rect.left + cx * sx - 90 * sx) + 'px',
+          top: (rect.top + 408 * sy) + 'px',
+          width: (180 * sx) + 'px',
+          fontSize: (18 * sy) + 'px',
+          padding: '6px 10px',
+          fontFamily: 'monospace', textAlign: 'center',
+          background: '#222', color: '#fff',
+          border: '2px solid #ffd700', borderRadius: '6px',
+          outline: 'none', zIndex: 10
+        });
+
+        const btn = document.createElement('button');
+        btn.textContent = 'Confirmar';
+        Object.assign(btn.style, {
+          position: 'fixed',
+          left: (rect.left + cx * sx - 60 * sx) + 'px',
+          top: (rect.top + 456 * sy) + 'px',
+          width: (120 * sx) + 'px',
+          fontSize: (16 * sy) + 'px',
+          padding: '7px 0',
+          fontFamily: 'monospace', cursor: 'pointer',
+          background: '#ffd700', color: '#111',
+          border: 'none', borderRadius: '6px', zIndex: 10
+        });
+
+        document.body.appendChild(input);
+        document.body.appendChild(btn);
+        input.focus();
+
+        const submit = () => {
+          const name = input.value.trim() || 'Anónimo';
+          document.body.removeChild(input);
+          document.body.removeChild(btn);
+          const hof = addToHOF(name, this.finalScore);
+          this.showHOF(CANVAS_W / 2, hof, 530, { name, score: this.finalScore });
+          this.showRestart(CANVAS_W / 2, 720);
+        };
+
+        btn.addEventListener('click', submit);
+        input.addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
+      }
+
+      showHOF(cx, hof, startY, highlight = null) {
+        this.add.text(cx, startY, '— HALL OF FAME —', {
+          fontSize: '20px', fill: '#ffd700', fontFamily: 'monospace'
+        }).setOrigin(0.5);
+
+        if (hof.length === 0) {
+          this.add.text(cx, startY + 34, '(sin registros)', {
+            fontSize: '15px', fill: '#888888', fontFamily: 'monospace'
+          }).setOrigin(0.5);
+          return;
+        }
+
+        hof.forEach((entry, i) => {
+          const medal = ['🥇', '🥈', '🥉', '4.', '5.'][i];
+          const isMe = highlight && entry.name === highlight.name && entry.score === highlight.score;
+          const rowY = startY + 36 + i * 28;
+          if (isMe) {
+            // Fondo resaltado detrás de la fila
+            const bg = this.add.graphics();
+            bg.fillStyle(0xffd700, 0.18);
+            bg.fillRoundedRect(cx - 190, rowY - 12, 380, 24, 5);
+            bg.lineStyle(1.5, 0xffd700, 0.7);
+            bg.strokeRoundedRect(cx - 190, rowY - 12, 380, 24, 5);
+          }
+          const fill = isMe ? '#ffe44d' : (i === 0 ? '#ffd700' : '#cccccc');
+          const size = isMe ? '16px' : '15px';
+          const style = isMe ? 'bold' : 'normal';
+          this.add.text(cx, rowY,
+            `${medal} ${entry.name.padEnd(16)} ${entry.score}`,
+            { fontSize: size, fill, fontFamily: 'monospace', fontStyle: style }
+          ).setOrigin(0.5);
+        });
+      }
+
+      showRestart(cx, y) {
+        const btn = this.add.text(cx, y, '[ JUGAR DE NUEVO ]', {
+          fontSize: '22px', fill: '#00ccff', fontFamily: 'monospace'
+        }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+
+        btn.on('pointerover', () => btn.setStyle({ fill: '#ffffff' }));
+        btn.on('pointerout', () => btn.setStyle({ fill: '#00ccff' }));
+        btn.on('pointerdown', () => this.scene.start('GameScene'));
+      }
+    }
+
+    // ── Boot ──────────────────────────────────────────────────────────────────
+    new Phaser.Game({
+      type: Phaser.AUTO,
+      width: CANVAS_W,
+      height: CANVAS_H,
+      backgroundColor: '#111111',
+      scene: [GameScene, GameOverScene]
+    });
+  </script>
+</body>
+
+</html>
