@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Juego de la vaca saltarina - Ternera del Pirineo</title>
+  <style>
+    body {
+      font-family: 'Courier New', Courier, monospace;
+      text-align: center;
+      background-color: #f7f7f7;
+      overflow: hidden;
+      /* Prevents scroll */
+      margin: 0;
+      padding: 10px;
+      box-sizing: border-box;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+
+    h1 {
+      color: #333;
+      font-size: clamp(1.5rem, 5vw, 2.5rem);
+      margin: 0.5rem 0;
+    }
+
+    h2 {
+      color: #666;
+      font-size: clamp(1rem, 3vw, 1.5rem);
+      margin: 0.25rem 0;
+    }
+
+    p {
+      font-size: clamp(0.8rem, 2.5vw, 1rem);
+      margin: 0.5rem 0;
+      padding: 0 10px;
+    }
+
+    /* The game container */
+    #game {
+      width: min(90vw, 600px);
+      height: min(30vw, 200px);
+      border-bottom: 2px solid #535353;
+      margin: 1rem auto;
+      position: relative;
+      background-color: white;
+      overflow: hidden;
+    }
+
+    /* The Cow */
+    #cow {
+      width: clamp(30px, 6vw, 40px);
+      height: clamp(30px, 6vw, 40px);
+      position: absolute;
+      bottom: 0;
+      left: clamp(30px, 8vw, 50px);
+      font-size: clamp(30px, 6vw, 40px);
+      /* Emoji size */
+      line-height: 1.1;
+      transform: scaleX(-1);
+      /* Flips horizontally */
+    }
+
+    /* The obstacle (Tree) */
+    #cactus {
+      width: clamp(25px, 5vw, 30px);
+      height: clamp(30px, 6vw, 40px);
+      position: absolute;
+      bottom: 0;
+      left: 95%;
+      /* Starts off-screen to the right */
+      font-size: clamp(25px, 5vw, 30px);
+      line-height: 1.1;
+    }
+
+    /* Obstacle animation */
+    .cactus-animate {
+      animation: block 1.5s infinite linear;
+    }
+
+    /* Jump animation */
+    .animate-jump {
+      animation: jump 500ms linear;
+    }
+
+    /* Tree movement definition */
+    @keyframes block {
+      0% {
+        left: 100%;
+      }
+
+      100% {
+        left: -10%;
+      }
+    }
+
+    /* Jump definition */
+    @keyframes jump {
+      0% {
+        bottom: 0;
+      }
+
+      30% {
+        bottom: clamp(60px, 15vw, 100px);
+      }
+
+      70% {
+        bottom: clamp(60px, 15vw, 100px);
+      }
+
+      100% {
+        bottom: 0;
+      }
+    }
+
+    #score {
+      margin-top: 1rem;
+      font-size: clamp(1rem, 3vw, 1.25rem);
+      font-weight: bold;
+    }
+
+    .mensaje {
+      margin-top: 1rem;
+      color: #555;
+      font-size: clamp(0.8rem, 2.5vw, 1rem);
+      padding: 0 10px;
+    }
+
+    /* Game Over Popup Styles */
+    .popup {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background-color: rgba(0, 0, 0, 0.5);
+      z-index: 10000;
+      /* Higher z-index to ensure popup is above everything */
+    }
+
+    .popup-content {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background-color: white;
+      padding: clamp(20px, 5vw, 30px);
+      border-radius: 10px;
+      text-align: center;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+      max-width: min(400px, 90vw);
+      width: 90%;
+    }
+
+    .popup h2 {
+      color: #d32f2f;
+      margin-bottom: 15px;
+      font-size: clamp(1.2rem, 4vw, 1.5rem);
+    }
+
+    .popup p {
+      font-size: clamp(1rem, 3vw, 1.125rem);
+      margin-bottom: 20px;
+      color: #333;
+    }
+
+    .popup button {
+      background-color: #4caf50;
+      color: white;
+      border: none;
+      padding: clamp(10px, 2vw, 12px) clamp(20px, 4vw, 24px);
+      font-size: clamp(14px, 3vw, 16px);
+      border-radius: 5px;
+      cursor: pointer;
+      transition: background-color 0.3s;
+      touch-action: manipulation;
+    }
+
+    .popup button:hover {
+      background-color: #45a049;
+    }
+  </style>
+</head>
+
+<body>
+
+  <h1>La Vaca Saltarina</h1>
+  <h2>Ternera del Pirineo</h2>
+  <p>Hemos digitalizado nuestras vacas, ¿nos ayudas a que Margarita no se choque?</p>
+  <div id="game">
+    <div id="cow">🐂</div>
+    <div id="cactus">🌳</div>
+  </div>
+  <div class="tap-area" onclick="handleTap()" ontouchstart="handleTap()"></div>
+  <div id="score">Puntuación: 0</div>
+  <div class="mensaje">Pulsa <b>ESPACIO</b>, haz <b>CLICK</b> o <b>TOCA</b> la pantalla para saltar</div>
+
+  <!-- Game Over Popup -->
+  <div id="gameOverPopup" class="popup">
+    <div class="popup-content">
+      <h2>¡Fin del juego!</h2>
+      <p id="gameOverMessage">Margarita se ha chocado.</p>
+      <p id="finalScore">Tu puntuación: 0</p>
+      <button onclick="restartGame()" ontouchstart="restartGame()">Jugar de nuevo</button>
+    </div>
+  </div>
+
+  <script>
+    const cow = document.getElementById("cow");
+    const cactus = document.getElementById("cactus");
+    const scoreElement = document.getElementById("score");
+    let score = 0;
+    let isGameOver = false;
+
+    // Start cactus animation
+    cactus.classList.add("cactus-animate");
+
+    function jump() {
+      // Only jump if not already jumping
+      if (cow.classList != "animate-jump") {
+        cow.classList.add("animate-jump");
+      }
+      // Remove class after animation (500ms)
+      setTimeout(function () {
+        cow.classList.remove("animate-jump");
+      }, 500);
+    }
+
+    function showGameOverPopup(finalScore) {
+      document.getElementById('finalScore').textContent = 'Tu puntuación: ' + finalScore;
+      document.getElementById('gameOverPopup').style.display = 'block';
+    }
+
+    function restartGame() {
+      location.reload();
+    }
+
+    function handleTap() {
+      // Only allow jumping if game is not over
+      if (!isGameOver) {
+        jump();
+      }
+    }
+
+    // Detect collisions and add points
+    const checkDead = setInterval(function () {
+      if (isGameOver) return;
+
+      // Get cow's vertical position (top)
+      let cowTop = parseInt(window.getComputedStyle(cow).getPropertyValue("top"));
+
+      // Get tree's horizontal position (left)
+      let cactusLeft = parseInt(window.getComputedStyle(cactus).getPropertyValue("left"));
+      let gameHeight = document.getElementById('game').offsetHeight;
+      let cowLeft = parseInt(window.getComputedStyle(cow).getPropertyValue("left"));
+      let cowWidth = document.getElementById('cow').offsetWidth;
+
+      // Collision logic - responsive collision detection
+      // If the tree is hitting the cow horizontally AND the cow hasn't jumped high enough
+      if (cactusLeft < (cowLeft + cowWidth) && (cactusLeft + 30) > cowLeft && cowTop >= (gameHeight * 0.6)) {
+        cactus.style.animation = "none";
+        cactus.style.display = "none";
+        isGameOver = true;
+        showGameOverPopup(Math.floor(score / 100));
+      } else {
+        score++;
+        scoreElement.innerHTML = "Puntuación: " + Math.floor(score / 100);
+      }
+    }, 10);
+
+    // Controls: Keyboard and Click
+    document.addEventListener('keydown', function (event) {
+      if (event.code === 'Space') {
+        event.preventDefault(); // Prevent page scroll on mobile
+        jump();
+      }
+    });
+
+    document.addEventListener('click', function () {
+      jump();
+    });
+
+    // Touch events for mobile
+    document.addEventListener('touchstart', function (event) {
+      event.preventDefault(); // Prevent zoom and scroll
+      jump();
+    }, { passive: false });
+  </script>
+
+</body>
+
+</html>
