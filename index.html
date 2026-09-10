@@ -1,118 +1,212 @@
 <!DOCTYPE html>
 <html lang="es">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Wild West Games</title>
+  <title>Wild West Games - Portal Oficial</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Fuente de Google Fonts para un toque más gamer/moderno -->
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;800&display=swap" rel="stylesheet">
+
   <style>
-    *, *::before, *::after {
-      box-sizing: border-box;
+    /* Estilos generales */
+    * {
       margin: 0;
       padding: 0;
+      box-sizing: border-box;
     }
 
     body {
-      background-color: #111;
-      color: #e0d6c8;
-      font-family: 'Courier New', Courier, monospace;
+      font-family: 'Poppins', sans-serif;
+      background-color: #0f1020;
+      color: #ffffff;
+      display: flex;
+      flex-direction: column;
       min-height: 100vh;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      padding: 3rem 1.5rem;
     }
 
-    h1 {
-      font-size: 2.2rem;
-      letter-spacing: 0.1em;
-      text-transform: uppercase;
-      color: #d4a843;
-      margin-bottom: 0.4rem;
-    }
-
-    .subtitle {
-      color: #7a6e60;
-      font-size: 0.9rem;
-      letter-spacing: 0.15em;
-      margin-bottom: 3rem;
-    }
-
-    .grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-      gap: 1.5rem;
-      width: 100%;
-      max-width: 860px;
-    }
-
-    .card {
-      background-color: #1c1c1c;
-      border: 1px solid #2e2a24;
-      border-radius: 12px;
-      padding: 2rem 1.5rem 1.5rem;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 1rem;
-      text-decoration: none;
-      color: inherit;
-      transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
-    }
-
-    .card:hover {
-      transform: translateY(-5px);
-      border-color: #d4a843;
-      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
-    }
-
-    .card-thumb {
-      font-size: 4rem;
-      line-height: 1;
-      user-select: none;
-    }
-
-    .card-title {
-      font-size: 1rem;
-      font-weight: bold;
+    /* Cabecera */
+    header {
       text-align: center;
-      color: #e0d6c8;
-      letter-spacing: 0.04em;
+      padding: 40px 20px;
+      background: linear-gradient(135deg, #1b1c3a, #101124);
+      border-bottom: 2px solid #2a2c52;
     }
 
-    .card-cta {
-      margin-top: auto;
-      font-size: 0.8rem;
-      color: #d4a843;
-      letter-spacing: 0.1em;
+    .logo {
+      font-size: 2.5rem;
+      font-weight: 800;
+      color: #ff4757;
+      margin-bottom: 10px;
+    }
+
+    .logo span {
+      color: #ffffff;
+    }
+
+    header p {
+      color: #a4b0be;
+      font-size: 1.1rem;
+    }
+
+    /* Contenedor principal */
+    .container {
+      max-width: 1100px;
+      margin: 40px auto;
+      padding: 0 20px;
+      flex: 1;
+      width: 100%;
+    }
+
+    .container h2 {
+      font-size: 1.8rem;
+      margin-bottom: 25px;
+      border-left: 5px solid #ff4757;
+      padding-left: 10px;
+    }
+
+    /* Cuadrícula de juegos (Grid) */
+    .grid-juegos {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 25px;
+    }
+
+    /* Tarjetas de cada juego */
+    .card-juego {
+      background-color: #1a1b35;
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+      transition: transform 0.3s ease, box-shadow 0.3s ease;
+      border: 1px solid #2d2f5a;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .card-juego:hover {
+      transform: translateY(-8px);
+      box-shadow: 0 8px 25px rgba(255, 71, 87, 0.2);
+    }
+
+    /* Contenedor para los miniatura con emojis */
+    .card-thumb {
+      width: 100%;
+      height: 180px;
+      background-color: #111226;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 5rem;
+      user-select: none;
+      border-bottom: 1px solid #2d2f5a;
+    }
+
+    .card-content {
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      flex-grow: 1;
+    }
+
+    .card-content h3 {
+      font-size: 1.3rem;
+      margin-bottom: 10px;
+      color: #fff;
+    }
+
+    .card-content p {
+      color: #a4b0be;
+      font-size: 0.9rem;
+      margin-bottom: 20px;
+      line-height: 1.4;
+      flex-grow: 1;
+    }
+
+    /* Botón de jugar */
+    .btn {
+      display: inline-block;
+      background-color: #ff4757;
+      color: white;
+      padding: 10px 20px;
+      border-radius: 6px;
+      text-decoration: none;
+      font-weight: 600;
+      transition: background-color 0.2s ease;
+      width: 100%;
+      text-align: center;
+    }
+
+    .btn:hover {
+      background-color: #ff6b81;
+    }
+
+    /* Pie de página */
+    footer {
+      text-align: center;
+      padding: 20px;
+      background-color: #0b0c16;
+      color: #747d8c;
+      font-size: 0.9rem;
+      border-top: 1px solid #1b1c3a;
     }
   </style>
+
 </head>
+
 <body>
 
-  <h1>Wild West Games</h1>
-  <p class="subtitle">Elige tu juego</p>
+  <!-- Cabecera de la página -->
+  <header>
+    <div class="logo">🤠 <span>Wild West Games</span></div>
+    <p>¡Elige tu juego y demuestra tu habilidad en el Lejano Oeste!</p>
+  </header>
 
-  <div class="grid">
+  <!-- Sección principal con la lista de juegos -->
+  <main class="container">
+    <h2>Nuestros Juegos</h2>
 
-    <a class="card" href="circular-simon.html">
-      <div class="card-thumb">🎯</div>
-      <div class="card-title">Circular Simon<br>Tactical Edition</div>
-      <span class="card-cta">Jugar →</span>
-    </a>
+    <div class="grid-juegos">
 
-    <a class="card" href="ciudad-sin-ley.html">
-      <div class="card-thumb">🤠</div>
-      <div class="card-title">Ciudad sin Ley</div>
-      <span class="card-cta">Jugar →</span>
-    </a>
+      <!-- JUEGO 1: Circular Simon -->
+      <div class="card-juego">
+        <div class="card-thumb">🎯</div>
+        <div class="card-content">
+          <h3>Circular Simon<br><small style="font-size: 0.8rem; color: #ff4757;">Tactical Edition</small></h3>
+          <p>Pon a prueba tu memoria táctica en este reto de secuencias de ritmo rápido.</p>
+          <a href="circular-simon.html" class="btn">¡Jugar Ahora!</a>
+        </div>
+      </div>
 
-    <a class="card" href="vaca-saltarina.html">
-      <div class="card-thumb">🐄</div>
-      <div class="card-title">Juego de la Vaca Saltarina<br>Ternera del Pirineo</div>
-      <span class="card-cta">Jugar →</span>
-    </a>
+      <!-- JUEGO 2: Ciudad sin Ley -->
+      <div class="card-juego">
+        <div class="card-thumb">🤠</div>
+        <div class="card-content">
+          <h3>Ciudad sin Ley</h3>
+          <p>Adéntrate en el Salvaje Oeste y demuestra quién manda en este pueblo sin ley.</p>
+          <a href="ciudad-sin-ley.html" class="btn">¡Jugar Ahora!</a>
+        </div>
+      </div>
 
-  </div>
+      <!-- JUEGO 3: Vaca Saltarina -->
+      <div class="card-juego">
+        <div class="card-thumb">🐄</div>
+        <div class="card-content">
+          <h3>Vaca Saltarina<br><small style="font-size: 0.8rem; color: #ff4757;">Ternera del Pirineo</small></h3>
+          <p>Ayuda a la vaca a esquivar obstáculos y saltar tan lejos como puedas.</p>
+          <a href="vaca-saltarina.html" class="btn">¡Jugar Ahora!</a>
+        </div>
+      </div>
+
+    </div>
+  </main>
+
+  <!-- Pie de página -->
+  <footer>
+    <p>&copy; 2026 Wild West Games. Todos los derechos reservados.</p>
+  </footer>
 
 </body>
+
 </html>
