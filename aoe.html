@@ -1,0 +1,910 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Estrategia Isometrica JS - Vue3 + Phaser3</title>
+  <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.0/dist/phaser.min.js"></script>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/easystarjs@0.4.4/bin/easystar-0.4.4.min.js"></script>
+  <style>
+    body { margin: 0; padding: 0; background: #111; font-family: sans-serif; overflow: hidden; user-select: none; }
+    #game-container { width: 100vw; height: 100vh; position: relative; }
+    canvas { display: block; }
+    
+    #ui-layer {
+      position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+      pointer-events: none; display: flex; flex-direction: column; justify-content: space-between;
+    }
+    .hud-box { pointer-events: auto; background: rgba(0,0,0,0.75); color: #fff; padding: 10px 15px; border-radius: 8px; border: 1px solid #444; }
+    .top-bar { margin: 10px; display: flex; gap: 20px; font-weight: bold; width: fit-content; }
+    
+    /* Panel de Navegación y Zoom Superior Derecho */
+    .cam-controls {
+      position: absolute; top: 10px; right: 10px; display: flex; flex-direction: column; gap: 8px; align-items: center;
+    }
+    .dpad { display: grid; grid-template-columns: repeat(3, 36px); grid-template-rows: repeat(3, 36px); gap: 4px; }
+    .nav-btn {
+      width: 36px; height: 36px; font-size: 16px; cursor: pointer; border: 1px solid #555;
+      background: #222; color: white; border-radius: 6px; display: flex; align-items: center; justify-content: center;
+    }
+    .nav-btn:active { background: #444; }
+    .zoom-btns { display: flex; gap: 6px; }
+    .zoom-btn { width: 42px; height: 36px; font-size: 16px; cursor: pointer; border: 1px solid #555; background: #222; color: white; border-radius: 6px; }
+
+    .bottom-right-hud { position: absolute; bottom: 20px; right: 20px; display: flex; flex-direction: column; align-items: flex-end; gap: 10px; }
+    .action-btn { width: 50px; height: 50px; font-size: 24px; cursor: pointer; border: 2px solid #666; background: #222; color: white; border-radius: 8px; }
+    .action-btn.active { border-color: #f39c12; background: #443000; }
+    .build-menu { display: flex; gap: 10px; background: rgba(0,0,0,0.85); padding: 10px; border-radius: 8px; margin-bottom: 5px; }
+    .build-card { border: 1px solid #555; padding: 8px; border-radius: 4px; cursor: pointer; text-align: center; font-size: 12px; transition: all 0.2s; }
+    .build-card:hover { background: #333; }
+    .build-card.selected { border-color: #f39c12; background: #553c00; font-weight: bold; box-shadow: 0 0 8px rgba(243, 156, 18, 0.6); }
+    .build-card.disabled { opacity: 0.4; cursor: not-allowed; }
+    .status-msg { font-size: 12px; color: #f39c12; margin-top: 5px; }
+  </style>
+</head>
+<body>
+
+<div id="game-container">
+  <div id="ui-layer">
+    <!-- Barra Superior de Recursos -->
+    <div class="top-bar hud-box">
+      <span>🪵 Madera: {{ store.wood }}</span>
+      <span>🐟 Alimento: {{ store.food }}</span>
+      <span>🧑 Población: {{ store.population }} (Casas: {{ store.housesCount }}/10)</span>
+      <span>🔨 Mejora Herrería: {{ store.hasBlacksmithUpgrade ? 'Activa (2 golpes)' : 'No (5 golpes)' }}</span>
+    </div>
+
+    <!-- Controles de Cámara / Zoom (Superior Derecho) -->
+    <div class="cam-controls hud-box">
+      <div class="zoom-btns">
+        <button class="zoom-btn" @click="zoomIn" title="Acercar (Zoom +)">🔍+</button>
+        <button class="zoom-btn" @click="zoomOut" title="Alejar (Zoom -)">🔍-</button>
+      </div>
+      <div class="dpad">
+        <div></div>
+        <button class="nav-btn" @click="panCamera(0, -60)">⬆️</button>
+        <div></div>
+        <button class="nav-btn" @click="panCamera(-60, 0)">⬅️</button>
+        <div></div>
+        <button class="nav-btn" @click="panCamera(60, 0)">➡️</button>
+        <div></div>
+        <button class="nav-btn" @click="panCamera(0, 60)">⬇️</button>
+        <div></div>
+      </div>
+    </div>
+
+    <!-- Panel Inferior Derecho -->
+    <div class="bottom-right-hud">
+      <div class="hud-box status-msg">
+        <span v-if="store.selectedEntity?.type === 'villager'">🧑 Aldeano #{{ store.selectedEntity.id }} seleccionado</span>
+        <span v-else-if="store.selectedEntity?.type === 'ship'">⛵ Barco #{{ store.selectedEntity.id }} (Pasajeros: {{ store.selectedShipPassengers }})</span>
+        <span v-else style="color:#aaa;">Haz clic en un aldeano o barco para seleccionarlo</span>
+        <br v-if="store.activeTool && store.selectedEntity">
+        <span v-if="store.activeTool === 'move'">👣 Modo Navegación / Desplazamiento</span>
+        <span v-else-if="store.activeTool === 'axe'">🪓 Modo Tala</span>
+        <span v-else-if="store.activeTool === 'hammer'">🔨 Modo Construcción (Selecciona edificio)</span>
+      </div>
+
+      <div v-if="store.activeTool === 'hammer' && store.selectedEntity?.type === 'villager'" class="build-menu hud-box">
+        <div class="build-card" :class="{ disabled: store.wood < 50 || store.housesCount >= 10, selected: store.selectedBuilding === 'house' }" @click="selectBuilding('house')">
+          🏠 Casa<br><small>50 Madera</small>
+        </div>
+        <div class="build-card" :class="{ disabled: store.wood < 80 || store.hasBlacksmith, selected: store.selectedBuilding === 'blacksmith' }" @click="selectBuilding('blacksmith')">
+          ⚒️ Herrería<br><small>80 Madera</small>
+        </div>
+        <div class="build-card" :class="{ disabled: store.wood < 100, selected: store.selectedBuilding === 'port' }" @click="selectBuilding('port')">
+          ⚓ Puerto<br><small>100 Mad (Costa)</small>
+        </div>
+      </div>
+
+      <div class="hud-box" style="display:flex; gap:10px;">
+        <button v-if="store.selectedEntity?.type === 'ship' && store.selectedShipPassengers > 0" class="action-btn" @click="triggerDisembark" title="Desembarcar Pasajero">🚪</button>
+        <button class="action-btn" :class="{ active: store.activeTool === 'move' }" @click="setTool('move')" title="Mover">👣</button>
+        <button class="action-btn" :class="{ active: store.activeTool === 'axe' }" @click="setTool('axe')" title="Talar">🪓</button>
+        <button class="action-btn" :class="{ active: store.activeTool === 'hammer' }" @click="setTool('hammer')" title="Construir">🔨</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const store = Vue.reactive({
+  wood: 150,
+  food: 0,
+  population: 1,
+  housesCount: 0,
+  hasBlacksmith: false,
+  hasBlacksmithUpgrade: false,
+  activeTool: 'move',        
+  selectedBuilding: null,  
+  selectedEntity: null,     
+  selectedShipPassengers: 0
+});
+
+let gameInstance = null;
+
+const app = Vue.createApp({
+  setup() {
+    const setTool = (tool) => {
+      store.activeTool = store.activeTool === tool ? null : tool;
+      store.selectedBuilding = null;
+    };
+    const selectBuilding = (bType) => {
+      store.selectedBuilding = store.selectedBuilding === bType ? null : bType;
+    };
+    const triggerDisembark = () => {
+      if (gameInstance?.scene.scenes[0]) {
+        gameInstance.scene.scenes[0].disembarkPassenger();
+      }
+    };
+    const zoomIn = () => {
+      if (gameInstance?.scene.scenes[0]) {
+        gameInstance.scene.scenes[0].adjustZoom(0.1);
+      }
+    };
+    const zoomOut = () => {
+      if (gameInstance?.scene.scenes[0]) {
+        gameInstance.scene.scenes[0].adjustZoom(-0.1);
+      }
+    };
+    const panCamera = (dx, dy) => {
+      if (gameInstance?.scene.scenes[0]) {
+        gameInstance.scene.scenes[0].panCamera(dx, dy);
+      }
+    };
+
+    return { store, setTool, selectBuilding, triggerDisembark, zoomIn, zoomOut, panCamera };
+  }
+});
+app.mount('#ui-layer');
+
+const GRID_SIZE = 20;
+const TILE_W = 64;
+const TILE_H = 32;
+const OFFSET_X = window.innerWidth / 2;
+const OFFSET_Y = 100;
+
+const TILE_GRASS = 0;
+const TILE_WATER = 1;
+
+class GameScene extends Phaser.Scene {
+  constructor() {
+    super('GameScene');
+    this.grid = [];
+    this.trees = new Map();
+    this.fishes = new Map();
+    this.ports = [];
+    this.villagers = [];
+    this.ships = [];
+    this.selectedEntity = null;
+    this.nextVillagerId = 1;
+    this.nextShipId = 1;
+    this.easystar = new EasyStar.js();
+    this.easystarWater = new EasyStar.js();
+  }
+
+  preload() {
+    const createTileTexture = (key, color, stroke) => {
+      const g = this.make.graphics({x: 0, y: 0, add: false});
+      g.fillStyle(color, 1);
+      g.lineStyle(1, stroke, 1);
+      g.beginPath();
+      g.moveTo(32, 0); g.lineTo(64, 16); g.lineTo(32, 32); g.lineTo(0, 16);
+      g.closePath();
+      g.fillPath(); g.strokePath();
+      g.generateTexture(key, 64, 32);
+    };
+
+    createTileTexture('tile_grass', 0x2ecc71, 0x27ae60);
+    createTileTexture('tile_water', 0x3498db, 0x2980b9);
+
+    const createEmojiTexture = (key, emoji, size = 36) => {
+      const canvas = document.createElement('canvas');
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext('2d');
+      ctx.font = `${Math.floor(size * 0.75)}px "Segoe UI Emoji", "Apple Color Emoji", sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(emoji, size / 2, size / 2);
+      this.textures.addCanvas(key, canvas);
+    };
+
+    createEmojiTexture('tree', '🌲', 36);
+    createEmojiTexture('villager', '🧑', 28);
+    createEmojiTexture('warehouse', '🪵', 36);
+    createEmojiTexture('house', '🏠', 36);
+    createEmojiTexture('blacksmith', '⚒️', 36);
+    createEmojiTexture('port', '⚓', 36);
+    createEmojiTexture('ship', '⛵', 32);
+    createEmojiTexture('fish', '🐟', 30);
+    createEmojiTexture('construction', '🏗️', 36);
+  }
+
+  create() {
+    this.setupGridAndTerrain();
+    this.createInitialWarehouse();
+    this.setupPathfinding();
+
+    // Restablecer vista cercana centrada
+    const mapCenterX = OFFSET_X;
+    const mapCenterY = OFFSET_Y + (GRID_SIZE * TILE_H / 2);
+    this.cameras.main.centerOn(mapCenterX, mapCenterY);
+    this.cameras.main.setZoom(0.9);
+
+    // Controles por teclado y rueda
+    this.cursors = this.input.keyboard.createCursorKeys();
+    this.input.on('wheel', (pointer, gameObjects, deltaX, deltaY) => {
+      this.adjustZoom(deltaY > 0 ? -0.05 : 0.05);
+    });
+
+    this.selectionRing = this.add.graphics();
+    this.selectionRing.lineStyle(2, 0xf1c40f, 1);
+    this.selectionRing.strokeEllipse(0, 0, 24, 12);
+    this.selectionRing.setVisible(false);
+
+    this.ghostBuilding = this.add.image(0, 0, 'house').setAlpha(0.6).setVisible(false);
+
+    this.spawnVillager(9, 10);
+    this.spawnInitialFishes();
+
+    this.input.on('pointerdown', this.handleMapClick, this);
+    this.input.on('pointermove', (pointer) => this.updateGhostBuilding(pointer));
+  }
+
+  update() {
+    // Desplazamiento de cámara con flechas del teclado
+    const speed = 12 / this.cameras.main.zoom;
+    if (this.cursors.left.isDown) this.cameras.main.scrollX -= speed;
+    if (this.cursors.right.isDown) this.cameras.main.scrollX += speed;
+    if (this.cursors.up.isDown) this.cameras.main.scrollY -= speed;
+    if (this.cursors.down.isDown) this.cameras.main.scrollY += speed;
+
+    if (this.input.activePointer) {
+      this.updateGhostBuilding(this.input.activePointer);
+    }
+  }
+
+  adjustZoom(delta) {
+    const newZoom = Phaser.Math.Clamp(this.cameras.main.zoom + delta, 0.4, 1.6);
+    this.cameras.main.setZoom(newZoom);
+  }
+
+  panCamera(dx, dy) {
+    this.cameras.main.scrollX += dx / this.cameras.main.zoom;
+    this.cameras.main.scrollY += dy / this.cameras.main.zoom;
+  }
+
+  isoToScreen(gx, gy) {
+    return {
+      x: (gx - gy) * (TILE_W / 2) + OFFSET_X,
+      y: (gx + gy) * (TILE_H / 2) + OFFSET_Y
+    };
+  }
+
+  screenToIso(sx, sy) {
+    const dx = (sx - OFFSET_X) / (TILE_W / 2);
+    const dy = (sy - OFFSET_Y) / (TILE_H / 2);
+    const gx = Math.floor((dy + dx) / 2 + 0.5);
+    const gy = Math.floor((dy - dx) / 2 + 0.5);
+    return { gx, gy };
+  }
+
+  setupGridAndTerrain() {
+    for (let x = 0; x < GRID_SIZE; x++) {
+      this.grid[x] = [];
+      for (let y = 0; y < GRID_SIZE; y++) {
+        const isWater = y >= 17;
+        this.grid[x][y] = {
+          type: isWater ? TILE_WATER : TILE_GRASS,
+          blocked: isWater,
+          hasTree: false,
+          hasFish: false,
+          building: null
+        };
+        const pos = this.isoToScreen(x, y);
+        const tileKey = isWater ? 'tile_water' : 'tile_grass';
+        this.add.image(pos.x, pos.y, tileKey).setOrigin(0.5, 0.5);
+      }
+    }
+
+    for (let x = 0; x < GRID_SIZE; x++) {
+      for (let y = 0; y < GRID_SIZE; y++) {
+        const isWater = this.grid[x][y].type === TILE_WATER;
+        const isClearing = (x >= 7 && x <= 12 && y >= 7 && y <= 12);
+        if (!isWater && !isClearing) {
+          this.plantTree(x, y, false);
+        }
+      }
+    }
+  }
+
+  updateGhostBuilding(pointer) {
+    if (store.activeTool === 'hammer' && store.selectedBuilding && this.selectedEntity?.type === 'villager') {
+      const { gx, gy } = this.screenToIso(pointer.worldX, pointer.worldY);
+      if (gx >= 0 && gx < GRID_SIZE && gy >= 0 && gy < GRID_SIZE) {
+        const pos = this.isoToScreen(gx, gy);
+        this.ghostBuilding.setTexture(store.selectedBuilding);
+        this.ghostBuilding.setPosition(pos.x, pos.y - 12);
+        this.ghostBuilding.setDepth(pos.y + 10);
+        
+        const isValid = this.canBuildAt(gx, gy, store.selectedBuilding);
+        this.ghostBuilding.setTint(isValid ? 0x2ecc71 : 0xe74c3c);
+        this.ghostBuilding.setVisible(true);
+        return;
+      }
+    }
+    if (this.ghostBuilding) {
+      this.ghostBuilding.setVisible(false);
+    }
+  }
+
+  canBuildAt(gx, gy, buildingType) {
+    if (gx < 0 || gx >= GRID_SIZE || gy < 0 || gy >= GRID_SIZE) return false;
+    const tile = this.grid[gx][gy];
+    if (!tile || tile.blocked || tile.type === TILE_WATER) return false;
+    
+    const costs = { house: 50, blacksmith: 80, port: 100 };
+    if (store.wood < costs[buildingType]) return false;
+
+    if (buildingType === 'house') {
+      return store.housesCount < 10;
+    }
+    if (buildingType === 'blacksmith') {
+      return !store.hasBlacksmith;
+    }
+    if (buildingType === 'port') {
+      return this.isAdjacentToWater(gx, gy);
+    }
+    return false;
+  }
+
+  spawnInitialFishes() {
+    const waterSpots = [[3, 18], [8, 18], [14, 18], [18, 18]];
+    waterSpots.forEach(([x, y]) => this.plantFish(x, y, false));
+  }
+
+  plantFish(x, y, updatePathing = true) {
+    if (this.grid[x] && this.grid[x][y] && this.grid[x][y].type === TILE_WATER) {
+      this.grid[x][y].hasFish = true;
+      const pos = this.isoToScreen(x, y);
+      const sprite = this.add.image(pos.x, pos.y - 8, 'fish').setDepth(pos.y);
+      
+      sprite.setInteractive({ useHandCursor: true });
+      sprite.on('pointerdown', (pointer, lx, ly, event) => {
+        event.stopPropagation();
+        if (this.selectedEntity?.type === 'ship' && !this.selectedEntity.unit.isBusy) {
+          this.orderFish(this.selectedEntity.unit, x, y);
+        }
+      });
+
+      this.fishes.set(`${x},${y}`, sprite);
+    }
+  }
+
+  plantTree(x, y, updatePathing = true) {
+    if (this.grid[x] && this.grid[x][y] && this.grid[x][y].type === TILE_GRASS && !this.grid[x][y].building && !this.isOccupiedByUnit(x, y)) {
+      this.grid[x][y].hasTree = true;
+      this.grid[x][y].blocked = true;
+      const pos = this.isoToScreen(x, y);
+      const sprite = this.add.image(pos.x, pos.y - 12, 'tree').setDepth(pos.y);
+      
+      sprite.setInteractive({ useHandCursor: true });
+      sprite.on('pointerdown', (pointer, lx, ly, event) => {
+        event.stopPropagation();
+        if (store.activeTool === 'axe' && this.selectedEntity?.type === 'villager' && !this.selectedEntity.unit.isBusy) {
+          this.orderChopTree(this.selectedEntity.unit, x, y);
+        }
+      });
+
+      this.trees.set(`${x},${y}`, sprite);
+      if (updatePathing) this.updatePathfindingGrid();
+    }
+  }
+
+  createInitialWarehouse() {
+    const x = 9, y = 9;
+    this.grid[x][y].blocked = true;
+    this.grid[x][y].building = 'warehouse';
+    const pos = this.isoToScreen(x, y);
+    this.add.image(pos.x, pos.y - 12, 'warehouse').setDepth(pos.y);
+    this.warehousePos = { x, y };
+  }
+
+  setupPathfinding() {
+    this.easystar.setAcceptableTiles([0]);
+    this.easystarWater.setAcceptableTiles([1]);
+    this.updatePathfindingGrid();
+  }
+
+  updatePathfindingGrid() {
+    const matrixGround = [];
+    const matrixWater = [];
+    for (let y = 0; y < GRID_SIZE; y++) {
+      matrixGround[y] = [];
+      matrixWater[y] = [];
+      for (let x = 0; x < GRID_SIZE; x++) {
+        matrixGround[y][x] = this.grid[x][y].blocked ? 1 : 0;
+        matrixWater[y][x] = (this.grid[x][y].type === TILE_WATER) ? 1 : 0;
+      }
+    }
+    this.easystar.setGrid(matrixGround);
+    this.easystarWater.setGrid(matrixWater);
+  }
+
+  selectEntity(type, unit) {
+    this.selectedEntity = unit ? { type, unit } : null;
+    if (unit) {
+      store.selectedEntity = { type, id: unit.id };
+      store.selectedShipPassengers = (type === 'ship') ? unit.passengers.length : 0;
+    } else {
+      store.selectedEntity = null;
+      store.selectedShipPassengers = 0;
+    }
+    this.updateSelectionRing();
+  }
+
+  updateSelectionRing() {
+    if (this.selectedEntity && this.selectedEntity.unit?.sprite) {
+      const sprite = this.selectedEntity.unit.sprite;
+      this.selectionRing.setPosition(sprite.x, sprite.y + 6);
+      this.selectionRing.setDepth(sprite.depth - 0.5);
+      this.selectionRing.setVisible(true);
+    } else {
+      this.selectionRing.setVisible(false);
+    }
+  }
+
+  handleMapClick(pointer) {
+    const { gx, gy } = this.screenToIso(pointer.worldX, pointer.worldY);
+    if (gx < 0 || gx >= GRID_SIZE || gy < 0 || gy >= GRID_SIZE) return;
+
+    if (!this.selectedEntity || this.selectedEntity.unit.isBusy) return;
+
+    const unit = this.selectedEntity.unit;
+
+    if (this.selectedEntity.type === 'villager') {
+      if (store.activeTool === 'move') {
+        if (!this.grid[gx][gy].blocked && !this.isOccupiedByUnit(gx, gy, unit)) {
+          this.moveUnitTo(unit, gx, gy);
+        }
+      } else if (store.activeTool === 'axe' && this.grid[gx][gy].hasTree) {
+        this.orderChopTree(unit, gx, gy);
+      } else if (store.activeTool === 'hammer' && store.selectedBuilding) {
+        this.orderBuild(unit, gx, gy, store.selectedBuilding);
+      }
+    } else if (this.selectedEntity.type === 'ship') {
+      if (this.grid[gx][gy].type === TILE_WATER) {
+        if (this.grid[gx][gy].hasFish) {
+          this.orderFish(unit, gx, gy);
+        } else {
+          this.moveShipTo(unit, gx, gy);
+        }
+      }
+    }
+  }
+
+  moveShipTo(ship, targetX, targetY, onComplete) {
+    this.easystarWater.findPath(ship.gx, ship.gy, targetX, targetY, (path) => {
+      if (!path || path.length === 0) {
+        ship.isBusy = false;
+        return;
+      }
+      
+      ship.isBusy = true;
+      let step = 1;
+      const moveNext = () => {
+        if (step >= path.length) {
+          ship.isBusy = false;
+          ship.gx = targetX;
+          ship.gy = targetY;
+          if (onComplete) onComplete();
+          return;
+        }
+        const nextNode = path[step];
+        ship.gx = nextNode.x;
+        ship.gy = nextNode.y;
+        const pos = this.isoToScreen(ship.gx, ship.gy);
+
+        this.tweens.add({
+          targets: ship.sprite,
+          x: pos.x,
+          y: pos.y - 8,
+          duration: 350,
+          onUpdate: () => { if (this.selectedEntity?.unit === ship) this.updateSelectionRing(); },
+          onComplete: () => {
+            ship.sprite.setDepth(pos.y + 1);
+            if (this.selectedEntity?.unit === ship) this.updateSelectionRing();
+            step++;
+            moveNext();
+          }
+        });
+      };
+      moveNext();
+    });
+    this.easystarWater.calculate();
+  }
+
+  orderFish(ship, fx, fy) {
+    const target = this.getAdjacentWaterTile(fx, fy) || { x: fx, y: fy };
+
+    this.moveShipTo(ship, target.x, target.y, () => {
+      ship.isBusy = true;
+      const fishSprite = this.fishes.get(`${fx},${fy}`);
+
+      if (fishSprite) {
+        this.tweens.add({
+          targets: fishSprite,
+          alpha: 0.2,
+          yoyo: true,
+          repeat: 4,
+          duration: 200,
+          onComplete: () => {
+            if (fishSprite) {
+              fishSprite.destroy();
+              this.fishes.delete(`${fx},${fy}`);
+            }
+            this.grid[fx][fy].hasFish = false;
+
+            ship.foodCarried += 10;
+            this.time.delayedCall(30000, () => this.plantFish(fx, fy, true));
+            this.returnFoodToPort(ship);
+          }
+        });
+      }
+    });
+  }
+
+  returnFoodToPort(ship) {
+    if (this.ports.length === 0) {
+      ship.isBusy = false;
+      return;
+    }
+
+    const port = this.ports[0];
+    const targetWaterTile = this.getAdjacentWaterTile(port.x, port.y);
+    if (!targetWaterTile) return;
+
+    this.moveShipTo(ship, targetWaterTile.x, targetWaterTile.y, () => {
+      store.food += ship.foodCarried;
+      ship.foodCarried = 0;
+      ship.isBusy = false;
+    });
+  }
+
+  boardShip(villager, ship) {
+    const targetGroundTile = this.getAdjacentFreeTile(villager, ship.gx, ship.gy);
+    if (!targetGroundTile) return;
+
+    this.moveUnitTo(villager, targetGroundTile.x, targetGroundTile.y, () => {
+      villager.inShip = true;
+      villager.sprite.setVisible(false);
+      ship.passengers.push(villager);
+      this.selectEntity('ship', ship);
+    });
+  }
+
+  disembarkPassenger() {
+    if (this.selectedEntity?.type !== 'ship') return;
+    const ship = this.selectedEntity.unit;
+
+    if (ship.passengers.length === 0) return;
+
+    const landTile = this.getAdjacentFreeGroundTile(ship.gx, ship.gy);
+    if (!landTile) return;
+
+    const villager = ship.passengers.pop();
+    villager.inShip = false;
+    villager.gx = landTile.x;
+    villager.gy = landTile.y;
+
+    const pos = this.isoToScreen(landTile.x, landTile.y);
+    villager.sprite.setPosition(pos.x, pos.y - 10);
+    villager.sprite.setDepth(pos.y + 1);
+    villager.sprite.setVisible(true);
+
+    store.selectedShipPassengers = ship.passengers.length;
+    this.selectEntity('villager', villager);
+  }
+
+  moveUnitTo(unit, targetX, targetY, onComplete) {
+    unit.targetGx = targetX;
+    unit.targetGy = targetY;
+
+    if (unit.gx === targetX && unit.gy === targetY) {
+      if (onComplete) onComplete();
+      return;
+    }
+
+    this.easystar.findPath(unit.gx, unit.gy, targetX, targetY, (path) => {
+      if (!path || path.length === 0) {
+        unit.isBusy = false;
+        unit.targetGx = null;
+        unit.targetGy = null;
+        return;
+      }
+      
+      unit.isBusy = true;
+      let step = 1;
+      const moveNext = () => {
+        if (step >= path.length) {
+          unit.isBusy = false;
+          unit.gx = targetX;
+          unit.gy = targetY;
+          unit.targetGx = null;
+          unit.targetGy = null;
+          if (onComplete) onComplete();
+          return;
+        }
+        const nextNode = path[step];
+        unit.gx = nextNode.x;
+        unit.gy = nextNode.y;
+        const pos = this.isoToScreen(unit.gx, unit.gy);
+
+        this.tweens.add({
+          targets: unit.sprite,
+          x: pos.x,
+          y: pos.y - 10,
+          duration: 300,
+          onUpdate: () => { if (this.selectedEntity?.unit === unit) this.updateSelectionRing(); },
+          onComplete: () => {
+            unit.sprite.setDepth(pos.y + 1);
+            if (this.selectedEntity?.unit === unit) this.updateSelectionRing();
+            step++;
+            moveNext();
+          }
+        });
+      };
+      moveNext();
+    });
+    this.easystar.calculate();
+  }
+
+  isOccupiedByUnit(x, y, excludeUnit = null) {
+    return this.villagers.some(v => !v.inShip && v !== excludeUnit && (
+      (v.gx === x && v.gy === y) || (v.targetGx === x && v.targetGy === y)
+    ));
+  }
+
+  getAdjacentFreeTile(unit, x, y) {
+    const dirs = [[0,1],[1,0],[0,-1],[-1,0]];
+    for (let d of dirs) {
+      if (unit.gx === x + d[0] && unit.gy === y + d[1]) {
+        if (!this.grid[unit.gx][unit.gy].blocked && !this.isOccupiedByUnit(unit.gx, unit.gy, unit)) {
+          return { x: unit.gx, y: unit.gy };
+        }
+      }
+    }
+    for (let d of dirs) {
+      const nx = x + d[0], ny = y + d[1];
+      if (nx >= 0 && nx < GRID_SIZE && ny >= 0 && ny < GRID_SIZE) {
+        if (!this.grid[nx][ny].blocked && !this.isOccupiedByUnit(nx, ny, unit)) {
+          return { x: nx, y: ny };
+        }
+      }
+    }
+    return null;
+  }
+
+  getAdjacentFreeGroundTile(x, y) {
+    const dirs = [[0,1],[1,0],[0,-1],[-1,0]];
+    for (let [dx, dy] of dirs) {
+      const nx = x + dx, ny = y + dy;
+      if (nx >= 0 && nx < GRID_SIZE && ny >= 0 && ny < GRID_SIZE) {
+        if (this.grid[nx][ny].type === TILE_GRASS && !this.grid[nx][ny].blocked && !this.isOccupiedByUnit(nx, ny)) {
+          return { x: nx, y: ny };
+        }
+      }
+    }
+    return null;
+  }
+
+  isAdjacentToWater(x, y) {
+    const dirs = [[0,1],[1,0],[0,-1],[-1,0]];
+    return dirs.some(([dx, dy]) => {
+      const nx = x + dx, ny = y + dy;
+      return nx >= 0 && nx < GRID_SIZE && ny >= 0 && ny < GRID_SIZE && this.grid[nx][ny].type === TILE_WATER;
+    });
+  }
+
+  getAdjacentWaterTile(x, y) {
+    const dirs = [[0,1],[1,0],[0,-1],[-1,0]];
+    for (let [dx, dy] of dirs) {
+      const nx = x + dx, ny = y + dy;
+      if (nx >= 0 && nx < GRID_SIZE && ny >= 0 && ny < GRID_SIZE && this.grid[nx][ny].type === TILE_WATER) {
+        return { x: nx, y: ny };
+      }
+    }
+    return null;
+  }
+
+  orderChopTree(unit, tx, ty) {
+    const target = this.getAdjacentFreeTile(unit, tx, ty);
+    if (!target) return;
+
+    this.moveUnitTo(unit, target.x, target.y, () => {
+      unit.isBusy = true;
+      const hitsNeeded = store.hasBlacksmithUpgrade ? 2 : 5;
+      let hitsDone = 0;
+      const treeSprite = this.trees.get(`${tx},${ty}`);
+
+      this.time.addEvent({
+        delay: 500,
+        repeat: hitsNeeded - 1,
+        callback: () => {
+          hitsDone++;
+
+          if (treeSprite) {
+            this.tweens.add({
+              targets: treeSprite,
+              alpha: 0.3,
+              x: treeSprite.x + (hitsDone % 2 === 0 ? 3 : -3),
+              yoyo: true,
+              duration: 80,
+              onComplete: () => { if (treeSprite) treeSprite.alpha = 1; }
+            });
+          }
+
+          if (hitsDone >= hitsNeeded) {
+            if (treeSprite) {
+              treeSprite.destroy();
+              this.trees.delete(`${tx},${ty}`);
+            }
+            this.grid[tx][ty].hasTree = false;
+            this.grid[tx][ty].blocked = false;
+            this.updatePathfindingGrid();
+
+            unit.woodCarried += 10;
+
+            this.time.delayedCall(300000, () => this.plantTree(tx, ty, true));
+            this.returnWoodToWarehouse(unit);
+          }
+        }
+      });
+    });
+  }
+
+  returnWoodToWarehouse(unit) {
+    const target = this.getAdjacentFreeTile(unit, this.warehousePos.x, this.warehousePos.y);
+    if (!target) {
+      unit.isBusy = false;
+      return;
+    }
+
+    this.moveUnitTo(unit, target.x, target.y, () => {
+      store.wood += unit.woodCarried;
+      unit.woodCarried = 0;
+      unit.isBusy = false;
+    });
+  }
+
+  orderBuild(unit, bx, by, buildingType) {
+    if (!this.canBuildAt(bx, by, buildingType)) return;
+
+    const target = this.getAdjacentFreeTile(unit, bx, by);
+    if (!target) return;
+
+    const costs = { house: 50, blacksmith: 80, port: 100 };
+    store.wood -= costs[buildingType];
+    this.grid[bx][by].blocked = true;
+    this.grid[bx][by].building = 'construction';
+    this.updatePathfindingGrid();
+
+    const bPos = this.isoToScreen(bx, by);
+    const constrSprite = this.add.image(bPos.x, bPos.y - 12, 'construction').setDepth(bPos.y);
+    const blinkTween = this.tweens.add({
+      targets: constrSprite,
+      alpha: 0.4,
+      yoyo: true,
+      repeat: -1,
+      duration: 350
+    });
+
+    this.moveUnitTo(unit, target.x, target.y, () => {
+      unit.isBusy = true;
+      
+      this.time.delayedCall(3000, () => {
+        blinkTween.stop();
+        constrSprite.destroy();
+
+        this.grid[bx][by].building = buildingType;
+        this.add.image(bPos.x, bPos.y - 12, buildingType).setDepth(bPos.y);
+        unit.isBusy = false;
+
+        if (buildingType === 'house') {
+          store.housesCount++;
+          store.population++;
+          this.spawnVillager(bx, by);
+        } else if (buildingType === 'blacksmith') {
+          store.hasBlacksmith = true;
+          store.hasBlacksmithUpgrade = true;
+        } else if (buildingType === 'port') {
+          this.ports.push({ x: bx, y: by });
+          const waterTile = this.getAdjacentWaterTile(bx, by);
+          if (waterTile && store.wood >= 40) {
+            store.wood -= 40;
+            this.spawnShip(waterTile.x, waterTile.y);
+          }
+        }
+      });
+    });
+  }
+
+  spawnVillager(x, y) {
+    let spawnX = x, spawnY = y;
+    if (this.grid[x][y].blocked || this.isOccupiedByUnit(x, y)) {
+      const freeTile = this.getAdjacentFreeTile({ gx: x, gy: y }, x, y);
+      if (freeTile) {
+        spawnX = freeTile.x;
+        spawnY = freeTile.y;
+      }
+    }
+    const pos = this.isoToScreen(spawnX, spawnY);
+    const sprite = this.add.image(pos.x, pos.y - 10, 'villager').setDepth(pos.y + 1);
+    
+    const villager = {
+      id: this.nextVillagerId++,
+      gx: spawnX,
+      gy: spawnY,
+      targetGx: null,
+      targetGy: null,
+      sprite,
+      woodCarried: 0,
+      isBusy: false,
+      inShip: false
+    };
+
+    sprite.setInteractive({ useHandCursor: true });
+    sprite.on('pointerdown', (pointer, localX, localY, event) => {
+      event.stopPropagation();
+      this.selectEntity('villager', villager);
+    });
+
+    this.villagers.push(villager);
+
+    if (!this.selectedEntity) {
+      this.selectEntity('villager', villager);
+    }
+  }
+
+  spawnShip(x, y) {
+    const pos = this.isoToScreen(x, y);
+    const sprite = this.add.image(pos.x, pos.y - 8, 'ship').setDepth(pos.y + 1);
+
+    const ship = {
+      id: this.nextShipId++,
+      gx: x,
+      gy: y,
+      sprite,
+      foodCarried: 0,
+      isBusy: false,
+      passengers: []
+    };
+
+    sprite.setInteractive({ useHandCursor: true });
+    sprite.on('pointerdown', (pointer, localX, localY, event) => {
+      event.stopPropagation();
+      if (this.selectedEntity?.type === 'villager' && !this.selectedEntity.unit.isBusy) {
+        this.boardShip(this.selectedEntity.unit, ship);
+      } else {
+        this.selectEntity('ship', ship);
+      }
+    });
+
+    this.ships.push(ship);
+    this.selectEntity('ship', ship);
+  }
+}
+
+const config = {
+  type: Phaser.AUTO,
+  width: window.innerWidth,
+  height: window.innerHeight,
+  parent: 'game-container',
+  scene: [GameScene]
+};
+
+gameInstance = new Phaser.Game(config);
+</script>
+</body>
+</html>
